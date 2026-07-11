@@ -18,6 +18,11 @@ type ToolResult = { content: Block[]; isError?: boolean };
 
 const server = new McpServer({ name: "good-eye", version: "0.1.0" });
 
+function withDb<T>(fn: (db: ReturnType<typeof openDb>) => T): T {
+  const db = openDb();
+  try { return fn(db); } finally { db.close(); }
+}
+
 function ok(content: Block[]): ToolResult {
   return { content: content.length ? content : [{ type: "text", text: "No matches." }] };
 }
@@ -65,9 +70,7 @@ server.registerTool("search_designs", {
   },
 }, async (args) => {
   try {
-    const db = openDb();
-    const hits = searchDesigns(db, args);
-    db.close();
+    const hits = withDb((db) => searchDesigns(db, args));
     const content: Block[] = [];
     for (const h of hits) {
       content.push({ type: "text", text: hitText(h) });
@@ -121,14 +124,12 @@ server.registerTool("list_components", {
   },
 }, async ({ type, query, limit }) => {
   try {
-    const db = openDb();
-    const rows = db.prepare(
+    const rows = withDb((db) => db.prepare(
       `SELECT d.slug, c.type, c.path, c.description FROM components c
        JOIN designs d ON d.id = c.design_id
        WHERE c.type = ? AND (? IS NULL OR c.description LIKE '%' || ? || '%')
        ORDER BY d.captured_at DESC LIMIT ?`
-    ).all(type, query ?? null, query ?? null, limit) as { slug: string; type: string; path: string; description: string }[];
-    db.close();
+    ).all(type, query ?? null, query ?? null, limit) as { slug: string; type: string; path: string; description: string }[]);
     const content: Block[] = [];
     for (const r of rows) {
       content.push({ type: "text", text: `${r.slug} — ${r.type}: ${r.description}` });
@@ -167,9 +168,7 @@ server.registerTool("list_tags", {
   inputSchema: {},
 }, async () => {
   try {
-    const db = openDb();
-    const counts = new Map(listTagCounts(db).map((t) => [t.tag, t.count]));
-    db.close();
+    const counts = new Map(withDb(listTagCounts).map((t) => [t.tag, t.count]));
     const tagLines = STYLE_TAGS.map((t) => `${t} (${counts.get(t) ?? 0})`).join(", ");
     const extras = [...counts.keys()].filter((t) => !(STYLE_TAGS as readonly string[]).includes(t));
     return ok([{
@@ -228,9 +227,7 @@ server.registerTool("reindex", {
   inputSchema: {},
 }, async () => {
   try {
-    const db = openDb();
-    const n = reindexAll(db);
-    db.close();
+    const n = withDb(reindexAll);
     return ok([{ type: "text", text: `Reindexed ${n} entries.` }]);
   } catch (err) { return fail(err); }
 });
