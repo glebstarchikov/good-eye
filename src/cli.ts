@@ -50,7 +50,16 @@ async function main(): Promise<void> {
         break;
       }
       if (positional.length === 0) throw new Error("usage: add <url...> | add --folder <p> --name <n> --platform <p>");
-      for (const url of positional) await addOne(url, note, Boolean(flags.force));
+      let anyFailed = false;
+      for (const url of positional) {
+        try {
+          await addOne(url, note, Boolean(flags.force));
+        } catch (err) {
+          anyFailed = true;
+          console.log(`failed: ${url} — ${err instanceof Error ? err.message : err}`);
+        }
+      }
+      if (anyFailed) process.exitCode = 1;
       break;
     }
     case "capture": {

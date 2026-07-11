@@ -14,10 +14,10 @@ adds the design-prompt hook, and prints config snippets for Claude Desktop / Cod
 ## Use
 
 - Add: tell Claude "add https://stripe.com to the design library — look at their pricing"
-  (or `node --import tsx src/cli.ts add <url> --note "..."`)
+  (or `node --import tsx src/cli.ts add <url> --note "..."` — from the repo)
 - Apps: paste an App Store / Play Store link, or ingest a folder of screenshots
 - Search happens automatically when you ask Claude to design something; manual:
-  `node --import tsx src/cli.ts search dark pricing --tag dark-mode`
+  `node --import tsx src/cli.ts search dark pricing --tag dark-mode` (from the repo)
 
 ## Layout
 

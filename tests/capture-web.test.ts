@@ -5,7 +5,7 @@ import path from "node:path";
 import { tempDataDir, startFixtureServer } from "./helpers.js";
 import { designDir } from "../src/lib/paths.js";
 import { readMeta } from "../src/lib/meta.js";
-import { captureWeb } from "../src/capture/web.js";
+import { captureWeb, salvageOrCleanup } from "../src/capture/web.js";
 
 let base: string;
 let close: () => void;
@@ -52,4 +52,31 @@ test("hard load failure creates no entry", async () => {
   const tmp = tempDataDir();
   await assert.rejects(() => captureWeb(`${base}missing-page`), /HTTP 404/);
   assert.ok(!fs.existsSync(path.join(tmp, "designs")) || fs.readdirSync(path.join(tmp, "designs")).length === 0);
+});
+
+test("salvageOrCleanup writes a provisional partial meta when a screenshot exists", () => {
+  tempDataDir();
+  const slug = "salvage-me--2026-01-01";
+  const dir = designDir(slug);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "desktop-fold.png"), "fake-png-bytes");
+
+  const salvaged = salvageOrCleanup(dir, { slug, url: "https://example.com", domain: "example.com", note: "" });
+
+  assert.equal(salvaged, true);
+  assert.ok(fs.existsSync(path.join(dir, "meta.json")));
+  const meta = readMeta(slug);
+  assert.equal(meta.status, "partial");
+});
+
+test("salvageOrCleanup removes the dir when nothing was captured", () => {
+  tempDataDir();
+  const slug = "nothing-here--2026-01-01";
+  const dir = designDir(slug);
+  fs.mkdirSync(dir, { recursive: true });
+
+  const salvaged = salvageOrCleanup(dir, { slug, url: "https://example.com", domain: "example.com", note: "" });
+
+  assert.equal(salvaged, false);
+  assert.ok(!fs.existsSync(dir));
 });

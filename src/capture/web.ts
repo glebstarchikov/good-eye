@@ -120,6 +120,27 @@ async function empiricalPalette(imagePath: string) {
     .map(([name, swatch]) => ({ name, hex: swatch!.hex, population: swatch!.population }));
 }
 
+/** Called on any throw after ensureDir(dir) inside captureWeb (spec §4: a partial capture saves what
+ * it got, marked "partial"). If a full-page or above-the-fold screenshot made it to disk, that's worth
+ * keeping — write a provisional meta.json with whatever fields are known so analyze() can still run on
+ * it later. Otherwise there's nothing salvageable, so remove the empty dir rather than strand it. */
+export function salvageOrCleanup(dir: string, fields: {
+  slug: string; url: string; domain: string; note: string; title?: string; components?: Meta["components"];
+}): boolean {
+  const hasScreenshot = fs.existsSync(path.join(dir, "desktop-fold.png")) || fs.existsSync(path.join(dir, "desktop.png"));
+  if (!hasScreenshot) {
+    fs.rmSync(dir, { recursive: true, force: true });
+    return false;
+  }
+  const meta = MetaSchema.parse({
+    slug: fields.slug, source_type: "web", platform: "web", url: fields.url, domain: fields.domain,
+    title: fields.title ?? "", category: "other", status: "partial", captured_at: new Date().toISOString(),
+    note: fields.note, tags: [], palette: [], typography: {}, components: fields.components ?? [], screens: [],
+  });
+  writeMeta(meta);
+  return true;
+}
+
 export async function captureWeb(url: string, opts: { note?: string; force?: boolean } = {}): Promise<string> {
   const domain = domainFromUrl(url);
   const slug = makeSlug(domain);
@@ -140,43 +161,51 @@ export async function captureWeb(url: string, opts: { note?: string; force?: boo
       throw new Error(`Failed to load ${url}: HTTP ${resp ? resp.status() : "no response"}`);
     }
     ensureDir(dir); // only after a successful load — hard failures create no entry
-    await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(degrade);
-    await dismissCookieBanners(page);
-    await autoScroll(page);
 
-    await page.screenshot({ path: path.join(dir, "desktop-fold.png") }); // viewport = above the fold
-    await page.screenshot({ path: path.join(dir, "desktop.png"), fullPage: true });
-    const components = await captureSections(page, dir);
-
-    const title = await page.title();
-    fs.writeFileSync(path.join(dir, "page.html"), await page.content());
-    fs.writeFileSync(path.join(dir, "styles.css"), await collectCss(page));
-    const declared = await extractDeclaredTokens(page);
-    await ctx.close();
-
-    // Mobile pass — degradation, not failure, if it breaks.
+    let title = "";
+    let components: Meta["components"] = [];
     try {
-      const mctx = await browser.newContext({ viewport: MOBILE });
-      const mpage = await mctx.newPage();
-      await mpage.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
-      await autoScroll(mpage);
-      await mpage.screenshot({ path: path.join(dir, "mobile.png"), fullPage: true });
-      await mctx.close();
-    } catch { degrade(); }
+      await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(degrade);
+      await dismissCookieBanners(page);
+      await autoScroll(page);
 
-    const palette = await empiricalPalette(path.join(dir, "desktop-fold.png"));
-    fs.writeFileSync(
-      path.join(dir, "tokens.json"),
-      JSON.stringify({ declared, empiricalPalette: palette }, null, 2)
-    );
+      await page.screenshot({ path: path.join(dir, "desktop-fold.png") }); // viewport = above the fold
+      await page.screenshot({ path: path.join(dir, "desktop.png"), fullPage: true });
+      components = await captureSections(page, dir);
 
-    const meta = MetaSchema.parse({
-      slug, source_type: "web", platform: "web", url, domain, title,
-      category: "other", status, captured_at: new Date().toISOString(),
-      note: opts.note ?? "", tags: [], palette: [], typography: {}, components, screens: [],
-    });
-    writeMeta(meta);
-    return slug;
+      title = await page.title();
+      fs.writeFileSync(path.join(dir, "page.html"), await page.content());
+      fs.writeFileSync(path.join(dir, "styles.css"), await collectCss(page));
+      const declared = await extractDeclaredTokens(page);
+      await ctx.close();
+
+      // Mobile pass — degradation, not failure, if it breaks.
+      try {
+        const mctx = await browser.newContext({ viewport: MOBILE });
+        const mpage = await mctx.newPage();
+        await mpage.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+        await autoScroll(mpage);
+        await mpage.screenshot({ path: path.join(dir, "mobile.png"), fullPage: true });
+        await mctx.close();
+      } catch { degrade(); }
+
+      const palette = await empiricalPalette(path.join(dir, "desktop-fold.png"));
+      fs.writeFileSync(
+        path.join(dir, "tokens.json"),
+        JSON.stringify({ declared, empiricalPalette: palette }, null, 2)
+      );
+
+      const meta = MetaSchema.parse({
+        slug, source_type: "web", platform: "web", url, domain, title,
+        category: "other", status, captured_at: new Date().toISOString(),
+        note: opts.note ?? "", tags: [], palette: [], typography: {}, components, screens: [],
+      });
+      writeMeta(meta);
+      return slug;
+    } catch (err) {
+      if (salvageOrCleanup(dir, { slug, url, domain, note: opts.note ?? "", title, components })) return slug;
+      throw err;
+    }
   } finally {
     await browser.close();
   }

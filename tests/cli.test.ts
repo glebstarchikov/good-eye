@@ -36,6 +36,20 @@ test("add -> search round trip through the real CLI", async () => {
   assert.match(reindexed.stdout, /reindexed 1 entries/);
 });
 
+test("batch add isolates per-URL failures: continues past a bad URL, exits 1", async () => {
+  const dataDir = tempDataDir();
+  const bad = `${base}missing-page`;
+  await assert.rejects(
+    () => cli(["add", bad, base, "--note", "batch"], dataDir),
+    (err: { code: number; stdout: string }) => {
+      assert.equal(err.code, 1);
+      assert.match(err.stdout, /^failed: .*missing-page.* — /m);
+      assert.match(err.stdout, /^saved: .+\[complete\]/m);
+      return true;
+    }
+  );
+});
+
 test("unknown command exits 1", async () => {
   const dataDir = tempDataDir();
   await assert.rejects(() => cli(["frobnicate"], dataDir), (err: { code: number }) => err.code === 1);
