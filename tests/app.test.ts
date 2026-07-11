@@ -60,6 +60,7 @@ test("isStoreUrl", () => {
   assert.equal(isStoreUrl("https://apps.apple.com/us/app/things-3/id904237743"), true);
   assert.equal(isStoreUrl("https://play.google.com/store/apps/details?id=com.x"), true);
   assert.equal(isStoreUrl("https://stripe.com"), false);
+  assert.equal(isStoreUrl("https://apps.apple.com.evil.com"), false);
 });
 
 test("ingestAppStore ingests listing screenshots and cleans up its temp dir", async () => {

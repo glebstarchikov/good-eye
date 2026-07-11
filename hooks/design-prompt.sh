@@ -11,7 +11,7 @@ process.stdin.on("data", (c) => (raw += c));
 process.stdin.on("end", () => {
   let prompt = "";
   try { prompt = JSON.parse(raw).prompt ?? ""; } catch {}
-  const design = /\b(design(s|ed|ing)?|redesign(s|ed|ing)?|landing page|hero (section|image|banner)|ui|ux|dashboards?|mockups?|wireframes?|styles?|styling|themes?|branding|visual design|look and feel|pricing page|typography|color palette|component library)\b/i;
+  const design = /\b(design(s|ed|ing)?|redesign(s|ed|ing)?|landing page|hero\s+(section|image|banner)|ui|ux|dashboards?|mockups?|wireframes?|styles?|styling|themes?|branding|visual design|look and feel|pricing page|typography|color palette|component library)\b/i;
   if (design.test(prompt)) {
     console.log("Personal design library available — use the good-eye skill and MCP tools (search_designs, list_components, get_design) to pull real visual references before proposing any design.");
   }

@@ -8,6 +8,7 @@ run() {
   if [ "$DRY" = 1 ]; then echo "DRY: $*"; else "$@"; fi
 }
 
+command -v node >/dev/null 2>&1 || { echo "ERROR: node not found on PATH" >&2; exit 1; }
 NODE_BIN="$(command -v node)"
 TSX="$REPO/node_modules/tsx/dist/cli.mjs"
 SERVER="$REPO/src/server.ts"

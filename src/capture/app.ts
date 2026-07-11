@@ -45,7 +45,7 @@ export async function ingestFolder(args: {
 }
 
 export function isStoreUrl(url: string): boolean {
-  return /(^|\.)apps\.apple\.com|(^|\.)play\.google\.com/.test(new URL(url).hostname);
+  return /(^|\.)apps\.apple\.com$|(^|\.)play\.google\.com$/.test(new URL(url).hostname);
 }
 
 /** Best-effort per spec §4 — store listing markup changes; folder ingestion is the reliable path. */

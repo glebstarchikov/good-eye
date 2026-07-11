@@ -21,6 +21,12 @@ test("design-flavored prompts trigger the reminder", async () => {
   }
 });
 
+test("hero + component word matches across runs of whitespace", async () => {
+  for (const p of ["punch up the hero    image", "the hero\tbanner needs work"]) {
+    assert.match(await runHook(p), /good-eye/i, `expected reminder for: ${p}`);
+  }
+});
+
 test("non-design prompts stay silent", async () => {
   for (const p of ["fix the failing sqlite test", "bump the node version", "write a migration"]) {
     assert.equal(await runHook(p), "", `expected silence for: ${p}`);

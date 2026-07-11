@@ -36,6 +36,7 @@ afterEach(() => {
   delete process.env.GOOD_EYE_CLAUDE_BIN;
   delete process.env.FAKE_CLAUDE_STATE;
   delete process.env.FAKE_CLAUDE_ALWAYS_BAD;
+  delete process.env.FAKE_CLAUDE_FENCED;
 });
 
 test("analyze applies librarian output, renames crops, promotes status, indexes", async () => {
@@ -54,6 +55,17 @@ test("analyze applies librarian output, renames crops, promotes status, indexes"
 
   const hits = searchDesigns(openDb(), { query: "restraint" });
   assert.equal(hits[0]?.slug, meta.slug);
+});
+
+test("analyze succeeds when the librarian output is fence-wrapped with surrounding prose", async () => {
+  tempDataDir();
+  process.env.FAKE_CLAUDE_FENCED = "1";
+  const seeded = seedCaptured();
+  await analyze(seeded.slug);
+
+  const meta = readMeta(seeded.slug);
+  assert.equal(meta.status, "complete");
+  assert.equal(meta.category, "saas-landing");
 });
 
 test("analyze retries once after invalid output and then succeeds", async () => {

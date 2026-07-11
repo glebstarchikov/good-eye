@@ -23,7 +23,7 @@ export const MetaSchema = z.object({
   url: z.string().nullable(),
   domain: z.string(), // hostname for web, app name for apps
   title: z.string().default(""),
-  category: z.enum(CATEGORIES as unknown as [string, ...string[]]).default("other"),
+  category: z.enum(CATEGORIES).default("other"),
   status: z.enum(["complete", "partial", "needs-analysis"]),
   captured_at: z.string(),
   note: z.string().default(""),
@@ -37,7 +37,7 @@ export type Meta = z.infer<typeof MetaSchema>;
 
 /** What the librarian (claude -p) must return. `file` refers to an existing provisional image path. */
 export const LibrarianOutputSchema = z.object({
-  category: z.enum(CATEGORIES as unknown as [string, ...string[]]),
+  category: z.enum(CATEGORIES),
   tags: z.array(z.string()).min(1).max(10),
   palette: z.array(PaletteEntry).min(1).max(8),
   typography: Typography,
