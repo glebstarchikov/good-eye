@@ -1,6 +1,8 @@
 import fs from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { designDir, ensureDir } from "../src/lib/paths.js";
 import { writeMeta, writeAnalysis, MetaSchema, type Meta } from "../src/lib/meta.js";
 
@@ -36,4 +38,18 @@ export function seedEntry(meta: Meta, analysis?: string): void {
   ensureDir(designDir(meta.slug));
   writeMeta(meta);
   if (analysis !== undefined) writeAnalysis(meta.slug, analysis);
+}
+
+/** Serve tests/fixtures/site on an ephemeral port. */
+export async function startFixtureServer(): Promise<{ base: string; close: () => void }> {
+  const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "site");
+  const server = http.createServer((req, res) => {
+    const file = path.join(fixtures, req.url === "/" ? "index.html" : req.url!.slice(1));
+    if (!fs.existsSync(file)) { res.writeHead(404); return res.end(); }
+    res.writeHead(200, { "content-type": file.endsWith(".css") ? "text/css" : "text/html" });
+    res.end(fs.readFileSync(file));
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const { port } = server.address() as { port: number };
+  return { base: `http://127.0.0.1:${port}/`, close: () => server.close() };
 }

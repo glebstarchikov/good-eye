@@ -1,0 +1,13 @@
+:root {
+  --brand: #635bff;
+  --bg: #0a2540;
+  --radius: 12px;
+}
+body { font-family: Georgia, serif; margin: 0; color: #111; }
+header, nav, footer { padding: 48px; background: var(--bg); color: #fff; }
+section { min-height: 700px; padding: 48px; }
+.hero { background: var(--brand); color: #fff; }
+.features { background: #f6f9fc; }
+.pricing { background: #fff; border-top: 4px solid var(--brand); }
+h1 { font-size: 56px; }
+h2 { font-size: 32px; }
