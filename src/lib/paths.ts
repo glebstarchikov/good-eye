@@ -26,7 +26,8 @@ export function makeSlug(name: string, date: Date = new Date()): string {
     .replace(/^www\./, "")
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
-    .slice(0, 60);
+    .slice(0, 60)
+    .replace(/-+$/, ""); // the slice can land on a separator; never leak a dash into the "--" delimiter
   return `${clean}--${date.toISOString().slice(0, 10)}`;
 }
 

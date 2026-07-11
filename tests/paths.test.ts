@@ -21,3 +21,8 @@ test("makeSlug normalizes url-ish names and appends date", () => {
   assert.equal(makeSlug("https://www.Stripe.com/", d), "stripe-com--2026-07-11");
   assert.equal(makeSlug("My Cool App!", d), "my-cool-app--2026-07-11");
 });
+
+test("makeSlug never leaves a trailing dash when the 60-char cap lands on a separator", () => {
+  const d = new Date("2026-07-11T12:00:00Z");
+  assert.equal(makeSlug("a".repeat(59) + " b", d), `${"a".repeat(59)}--2026-07-11`);
+});
