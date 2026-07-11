@@ -1,6 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import { tempDataDir, fixtureMeta, seedEntry } from "./helpers.js";
+import { designDir } from "../src/lib/paths.js";
 import { openDb, upsertDesign, searchDesigns, reindexAll, listTagCounts } from "../src/lib/db.js";
 
 function seedThree() {
@@ -62,6 +65,27 @@ test("search survives punctuation-laden queries", () => {
   seedThree();
   reindexAll(db);
   assert.doesNotThrow(() => searchDesigns(db, { query: 'dark "AND* (pricing:' }));
+});
+
+test("reindexAll is atomic: a corrupt meta.json aborts the rebuild without wiping the catalog", () => {
+  tempDataDir();
+  const db = openDb();
+  const a = fixtureMeta();
+  const b = fixtureMeta({
+    slug: "darkco-com--2026-02-01", domain: "darkco.com", title: "DarkCo — analytics",
+    category: "dashboard", tags: ["dark-mode", "dense"], captured_at: "2026-02-01T00:00:00.000Z",
+  });
+  seedEntry(a, "Minimal SaaS landing.");
+  seedEntry(b, "Dense dark dashboard.");
+  assert.equal(reindexAll(db), 2);
+
+  // Corrupt one meta.json on disk, then attempt a second reindex.
+  fs.writeFileSync(path.join(designDir(b.slug), "meta.json"), "{not json");
+  assert.throws(() => reindexAll(db));
+
+  // The catalog must still hold both entries from the first successful reindex.
+  const slugs = searchDesigns(db, {}).map((h) => h.slug).sort();
+  assert.deepEqual(slugs, [b.slug, a.slug].sort());
 });
 
 test("listTagCounts aggregates", () => {

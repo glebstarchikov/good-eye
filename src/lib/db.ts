@@ -66,9 +66,12 @@ export function upsertDesign(db: Database.Database, meta: Meta, analysis: string
 }
 
 export function reindexAll(db: Database.Database): number {
-  db.exec("DELETE FROM tags; DELETE FROM components; DELETE FROM colors; DELETE FROM designs; DELETE FROM designs_fts;");
   const slugs = listSlugs();
-  for (const slug of slugs) upsertDesign(db, readMeta(slug), readAnalysis(slug));
+  // One outer transaction: a corrupt meta.json must abort the rebuild, never leave a half-wiped catalog.
+  db.transaction(() => {
+    db.exec("DELETE FROM tags; DELETE FROM components; DELETE FROM colors; DELETE FROM designs; DELETE FROM designs_fts;");
+    for (const slug of slugs) upsertDesign(db, readMeta(slug), readAnalysis(slug));
+  })();
   return slugs.length;
 }
 
