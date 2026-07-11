@@ -1,0 +1,15 @@
+{
+  "category": "saas-landing",
+  "tags": ["minimal", "airy", "typography-led"],
+  "palette": [
+    { "hex": "#635BFF", "role": "primary", "prominence": 0.2 },
+    { "hex": "#0A2540", "role": "background", "prominence": 0.4 }
+  ],
+  "typography": { "families": ["Georgia"], "scale": "16/32/56", "notes": "serif display, weight-driven hierarchy" },
+  "components": [
+    { "file": "components/section-0.png", "type": "hero", "description": "full-bleed brand-purple hero with serif display headline" },
+    { "file": "components/section-1.png", "type": "pricing", "description": "three plain tiers separated by a brand top border" }
+  ],
+  "screens": [],
+  "review": "FixtureCo demonstrates restraint: a single brand purple carries the entire identity while a serif display face does the emotional work. Sections breathe with generous vertical padding, and the pricing block earns attention through a lone accent border rather than cards or shadows. Worth stealing: the one-accent-color discipline and the serif/sans tension. The dark header/footer bracket gives the page a solid frame without heavy chrome. Weaknesses: feature prose is undifferentiated and the nav offers no hierarchy, but as a study in doing more with less this holds up well beyond its size."
+}
