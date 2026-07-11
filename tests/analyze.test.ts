@@ -74,6 +74,24 @@ test("analyze leaves entry needs-analysis after two failures, still indexes", as
   assert.equal(hits[0]?.slug, seeded.slug);
 });
 
+test("partial entry that double-fails stays partial and logs to stderr", async () => {
+  tempDataDir();
+  process.env.FAKE_CLAUDE_ALWAYS_BAD = "1";
+  const seeded = seedCaptured();
+  seedEntry(fixtureMeta({ ...readMeta(seeded.slug), status: "partial" })); // simulate degraded capture
+  const errors: string[] = [];
+  const realError = console.error;
+  console.error = (...args: unknown[]) => { errors.push(args.map(String).join(" ")); };
+  try {
+    await analyze(seeded.slug);
+  } finally {
+    console.error = realError;
+  }
+  assert.equal(readMeta(seeded.slug).status, "partial");
+  assert.equal(errors.length, 1);
+  assert.match(errors[0]!, /analysis failed .* status left as partial/);
+});
+
 test("partial capture stays partial after successful analysis", async () => {
   tempDataDir();
   const seeded = seedCaptured();
