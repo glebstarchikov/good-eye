@@ -40,3 +40,19 @@ test("unknown command exits 1", async () => {
   const dataDir = tempDataDir();
   await assert.rejects(() => cli(["frobnicate"], dataDir), (err: { code: number }) => err.code === 1);
 });
+
+test("trailing --tag with no value exits 1 with a usage error", async () => {
+  const dataDir = tempDataDir();
+  await assert.rejects(
+    () => cli(["search", "x", "--tag"], dataDir),
+    (err: { code: number; stderr: string }) => err.code === 1 && /missing value for --tag/.test(err.stderr)
+  );
+});
+
+test("flag-shaped value after --tag is refused, not swallowed", async () => {
+  const dataDir = tempDataDir();
+  await assert.rejects(
+    () => cli(["search", "x", "--tag", "--category", "y"], dataDir),
+    (err: { code: number; stderr: string }) => err.code === 1 && /missing value for --tag/.test(err.stderr)
+  );
+});
