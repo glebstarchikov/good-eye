@@ -43,13 +43,25 @@ export function seedEntry(meta: Meta, analysis?: string): void {
 /** Serve tests/fixtures/site on an ephemeral port. */
 export async function startFixtureServer(): Promise<{ base: string; close: () => void }> {
   const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "site");
+  const sockets = new Set<import("node:net").Socket>();
   const server = http.createServer((req, res) => {
+    // /hang holds the connection open forever, so a page fetching it never reaches
+    // networkidle — mirrors analytics-heavy production sites (Stripe et al.).
+    if (req.url === "/hang") {
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.write("streaming");
+      return; // deliberately never res.end()
+    }
     const file = path.join(fixtures, req.url === "/" ? "index.html" : req.url!.slice(1));
     if (!fs.existsSync(file)) { res.writeHead(404); return res.end(); }
     res.writeHead(200, { "content-type": file.endsWith(".css") ? "text/css" : "text/html" });
     res.end(fs.readFileSync(file));
   });
+  server.on("connection", (s) => { sockets.add(s); s.on("close", () => sockets.delete(s)); });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   const { port } = server.address() as { port: number };
-  return { base: `http://127.0.0.1:${port}/`, close: () => server.close() };
+  return {
+    base: `http://127.0.0.1:${port}/`,
+    close: () => { for (const s of sockets) s.destroy(); server.close(); }, // destroy the hanging socket so close() returns
+  };
 }

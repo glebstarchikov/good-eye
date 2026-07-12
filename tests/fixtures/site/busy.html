@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>BusyCo — never idle</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header><strong>BusyCo</strong></header>
+  <nav><a href="#">Product</a> <a href="#">Pricing</a></nav>
+  <main>
+    <section class="hero"><h1>Always streaming</h1><p>This page keeps a request open forever.</p></section>
+    <section class="features"><h2>Features</h2><p>Feature one. Feature two.</p></section>
+    <section class="pricing"><h2>Pricing</h2><p>Free. Pro. Team.</p></section>
+  </main>
+  <footer><p>© BusyCo</p></footer>
+  <script>
+    // Hold an open connection so the page never reaches networkidle,
+    // exactly like a production site's analytics/telemetry long-poll.
+    fetch("/hang").catch(() => {});
+  </script>
+</body>
+</html>

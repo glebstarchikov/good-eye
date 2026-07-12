@@ -80,3 +80,11 @@ test("salvageOrCleanup removes the dir when nothing was captured", () => {
   assert.equal(salvaged, false);
   assert.ok(!fs.existsSync(dir));
 });
+
+test("a never-idle page still captures clean, not partial (networkidle timeout is not a degrade)", async () => {
+  tempDataDir();
+  const slug = await captureWeb(`${base}busy.html`, { note: "busy" });
+  const meta = readMeta(slug);
+  assert.equal(meta.status, "needs-analysis", "networkidle timeout alone must not mark the entry partial");
+  assert.ok(fs.existsSync(path.join(designDir(slug), "desktop.png")));
+});

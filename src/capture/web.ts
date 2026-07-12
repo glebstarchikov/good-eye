@@ -165,7 +165,10 @@ export async function captureWeb(url: string, opts: { note?: string; force?: boo
     let title = "";
     let components: Meta["components"] = [];
     try {
-      await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(degrade);
+      // Best-effort settle. Analytics-heavy sites never go network-idle, and autoScroll
+      // below is what actually triggers lazy-load — so a timeout here is normal, NOT a
+      // degrade. Partial is reserved for a genuinely missing artifact (e.g. the mobile pass).
+      await page.waitForLoadState("networkidle", { timeout: 6000 }).catch(() => {});
       await dismissCookieBanners(page);
       await autoScroll(page);
 
