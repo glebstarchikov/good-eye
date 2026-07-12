@@ -203,7 +203,10 @@ export async function captureWeb(url: string, opts: { note?: string; force?: boo
       writeMeta(meta);
       return slug;
     } catch (err) {
-      if (salvageOrCleanup(dir, { slug, url, domain, note: opts.note ?? "", title, components })) return slug;
+      if (salvageOrCleanup(dir, { slug, url, domain, note: opts.note ?? "", title, components })) {
+        console.error(`good-eye: capture degraded for ${slug}, saved as partial: ${err instanceof Error ? err.message : err}`);
+        return slug;
+      }
       throw err;
     }
   } finally {
