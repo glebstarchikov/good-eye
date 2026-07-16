@@ -1,28 +1,30 @@
 # good-eye
 
-Personal design-inspiration database: full-page screenshots, component crops, palettes,
-typography, and a written review for every site/app worth stealing from — searchable by
-Claude (Code/Desktop) and Codex through the `good-eye` MCP server.
+A personal design-inspiration database, searchable by Claude through MCP.
 
-## Install
+Instead of scrolling through bookmarks when a project needs a design direction, good-eye keeps full-page screenshots, component crops, palettes, typography, and a written review for every site or app worth stealing from. Claude (Code, Desktop) and Codex can search it directly through the `good-eye` MCP server, so design inspiration shows up automatically while designing something rather than requiring a manual lookup.
 
-    bash scripts/install.sh
+## Stack
+TypeScript, Node.js, the Model Context Protocol SDK, SQLite (FTS5), Playwright, Sharp.
 
-Registers the MCP server (user scope), symlinks the skill to `~/.claude/skills/good-eye`,
-adds the design-prompt hook, and prints config snippets for Claude Desktop / Codex.
+## Getting started
+```sh
+bash scripts/install.sh
+```
 
-## Use
+This registers the MCP server (user scope), symlinks the skill to `~/.claude/skills/good-eye`, adds the design-prompt hook, and prints config snippets for Claude Desktop and Codex.
 
-- Add: tell Claude "add https://stripe.com to the design library — look at their pricing"
-  (or `node --import tsx src/cli.ts add <url> --note "..."` — from the repo)
-- Apps: paste an App Store / Play Store link, or ingest a folder of screenshots
-- Search happens automatically when you ask Claude to design something; manual:
-  `node --import tsx src/cli.ts search dark pricing --tag dark-mode` (from the repo)
+Add a design: tell Claude "add https://stripe.com to the design library, look at their pricing" (or run `node --import tsx src/cli.ts add <url> --note "..."` from the repo). You can also paste an App Store or Play Store link, or ingest a folder of screenshots.
 
-## Layout
+Search happens automatically when you ask Claude to design something. To search manually: `node --import tsx src/cli.ts search dark pricing --tag dark-mode`.
 
-- `data/designs/<slug>/` — meta.json, analysis.md, screenshots, tokens (source of truth, gitignored)
-- `data/catalog.db` — derived SQLite/FTS5 index (`cli.ts reindex` rebuilds it)
-- `src/` — capture pipeline, librarian, CLI, MCP server; `skill/`, `hooks/`, `scripts/`
+Layout:
+- `data/designs/<slug>/` holds `meta.json`, `analysis.md`, screenshots, and tokens (the source of truth, gitignored)
+- `data/catalog.db` is a derived SQLite/FTS5 index (`cli.ts reindex` rebuilds it)
+- `src/` holds the capture pipeline, librarian, CLI, and MCP server; `skill/`, `hooks/`, `scripts/` hold the rest
 
-Spec: `docs/superpowers/specs/2026-07-11-design-inspiration-db-design.md`
+## License
+MIT
+
+---
+Part of what I build at [glebstarchikov.nl](https://glebstarchikov.nl).
