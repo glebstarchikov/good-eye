@@ -88,10 +88,13 @@ export type SearchHit = {
   status: string; captured_at: string; note: string; tags: string[]; snippet: string;
 };
 
-/** Turn free text into a safe FTS5 MATCH expression: quoted tokens, implicit AND. */
+/** Turn free text into a safe FTS5 MATCH expression: quoted tokens, OR-joined.
+ *  OR + bm25 rank surfaces best-overlap hits first; implicit AND made long
+ *  descriptive queries (the way agents search) return nothing unless every
+ *  word matched. Unicode-aware split so Cyrillic queries tokenize too. */
 function ftsQuery(q: string): string | null {
-  const tokens = q.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
-  return tokens.length ? tokens.map((t) => `"${t}"`).join(" ") : null;
+  const tokens = q.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  return tokens.length ? tokens.map((t) => `"${t}"`).join(" OR ") : null;
 }
 
 export function searchDesigns(db: Database.Database, args: SearchArgs): SearchHit[] {

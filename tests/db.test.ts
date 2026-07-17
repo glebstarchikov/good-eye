@@ -67,6 +67,30 @@ test("search survives punctuation-laden queries", () => {
   assert.doesNotThrow(() => searchDesigns(db, { query: 'dark "AND* (pricing:' }));
 });
 
+test("long descriptive queries recall partial matches (OR semantics, ranked)", () => {
+  tempDataDir();
+  const db = openDb();
+  const { b } = seedThree();
+  reindexAll(db);
+  // Only "pricing" and "dark" appear in entry b; the other words match nothing.
+  // Implicit-AND used to return zero hits for exactly this kind of agent query.
+  const hits = searchDesigns(db, { query: "bold conversion-focused pricing page with dark hero screenshots" });
+  assert.ok(hits.some((h) => h.slug === b.slug));
+});
+
+test("cyrillic queries tokenize and match", () => {
+  tempDataDir();
+  const db = openDb();
+  const meta = fixtureMeta({
+    slug: "kafe-ru--2026-04-01", domain: "kafe.ru", title: "Кафе — сайт кофейни",
+    captured_at: "2026-04-01T00:00:00.000Z",
+  });
+  seedEntry(meta, "Тёплый сайт кофейни с меню и бронированием столиков.");
+  reindexAll(db);
+  const hits = searchDesigns(db, { query: "сайт кофейни бронирование" });
+  assert.ok(hits.some((h) => h.slug === "kafe-ru--2026-04-01"));
+});
+
 test("reindexAll is atomic: a corrupt meta.json aborts the rebuild without wiping the catalog", () => {
   tempDataDir();
   const db = openDb();
