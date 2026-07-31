@@ -1,0 +1,9 @@
+{
+  "name": "good-eye",
+  "description": "Personal design-inspiration library — curated screenshots, palettes, typography and written reviews, searchable over MCP and consulted before proposing any UI.",
+  "version": "0.1.0",
+  "author": { "name": "Gleb Starchikov" },
+  "keywords": ["design", "ui", "ux", "inspiration", "reference", "mcp"],
+  "license": "MIT",
+  "repository": "https://github.com/glebstarchikov/good-eye"
+}

@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "good-eye": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/node_modules/tsx/dist/cli.mjs",
+        "${CLAUDE_PLUGIN_ROOT}/src/server.ts"
+      ],
+      "env": {}
+    }
+  }
+}
