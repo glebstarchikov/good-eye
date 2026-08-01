@@ -1,12 +1,24 @@
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import fs from "node:fs";
+import os from "node:os";
 
 const here = path.dirname(fileURLToPath(import.meta.url)); // <repo>/src/lib
 export const repoRoot = path.resolve(here, "..", "..");
 
+/**
+ * The library lives outside the checkout, in ~/.good-eye/data.
+ *
+ * It deliberately does NOT default to <repoRoot>/data: when good-eye is installed
+ * as a plugin, repoRoot is the versioned plugin cache directory
+ * (~/.claude/plugins/cache/.../good-eye/<version>/), which is replaced wholesale on
+ * every version bump. Since data/ is gitignored and never ships with the plugin, a
+ * repo-relative default would silently create an empty catalog on each upgrade and
+ * strand the real one. A stable home-relative path survives both upgrades and
+ * reinstalls, and keeps any absolute username out of the committed config.
+ */
 export function dataDir(): string {
-  return process.env.GOOD_EYE_DATA_DIR ?? path.join(repoRoot, "data");
+  return process.env.GOOD_EYE_DATA_DIR ?? path.join(os.homedir(), ".good-eye", "data");
 }
 export function designsDir(): string {
   return path.join(dataDir(), "designs");

@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
+import os from "node:os";
 import { tempDataDir } from "./helpers.js";
 import { dataDir, designDir, dbPath, makeSlug, repoRoot } from "../src/lib/paths.js";
 
@@ -11,9 +12,20 @@ test("dataDir honors GOOD_EYE_DATA_DIR at call time", () => {
   assert.equal(dbPath(), path.join(tmp, "catalog.db"));
 });
 
-test("dataDir defaults to <repo>/data", () => {
+test("dataDir defaults to ~/.good-eye/data, never the checkout", () => {
   delete process.env.GOOD_EYE_DATA_DIR;
-  assert.equal(dataDir(), path.join(repoRoot, "data"));
+  assert.equal(dataDir(), path.join(os.homedir(), ".good-eye", "data"));
+});
+
+// The negative half of the above, and the one that actually matters: when good-eye runs
+// as an installed plugin, repoRoot is the versioned plugin cache dir, which is replaced on
+// every version bump. A repo-relative default would strand the library there on upgrade.
+test("dataDir never resolves inside the checkout", () => {
+  delete process.env.GOOD_EYE_DATA_DIR;
+  assert.ok(
+    !dataDir().startsWith(repoRoot),
+    `dataDir() must not live under repoRoot (got ${dataDir()})`,
+  );
 });
 
 test("makeSlug normalizes url-ish names and appends date", () => {
