@@ -2,16 +2,21 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { chromium, type Browser } from "playwright";
 import { tempDataDir, startFixtureServer } from "./helpers.js";
 import { designDir } from "../src/lib/paths.js";
 import { readMeta } from "../src/lib/meta.js";
-import { captureWeb, salvageOrCleanup } from "../src/capture/web.js";
+import { captureWeb, salvageOrCleanup, gotoReady, looksChallenged, CaptureError } from "../src/capture/web.js";
 
 let base: string;
 let close: () => void;
 
-before(async () => { ({ base, close } = await startFixtureServer()); });
-after(() => close());
+before(async () => {
+  ({ base, close } = await startFixtureServer());
+  // Every stall path below waits out this budget; 15s apiece would dominate the suite.
+  process.env.GOOD_EYE_DOM_TIMEOUT_MS = "2000";
+});
+after(() => { close(); delete process.env.GOOD_EYE_DOM_TIMEOUT_MS; });
 
 test("captureWeb produces artifacts, tokens, and provisional meta", async () => {
   tempDataDir();
@@ -87,4 +92,162 @@ test("a never-idle page still captures clean, not partial (networkidle timeout i
   const meta = readMeta(slug);
   assert.equal(meta.status, "needs-analysis", "networkidle timeout alone must not mark the entry partial");
   assert.ok(fs.existsSync(path.join(designDir(slug), "desktop.png")));
+});
+
+// --- Regression: a stalled `<script defer>` must not look like an unreachable site -------------
+//
+// The bug this guards: DOMContentLoaded fires only after every deferred script has executed, so one
+// never-resolving deferred request (a DNS-blackholed analytics beacon, in the wild) withholds the
+// event permanently — even though the document parsed and the DOM is fully there. Gating navigation
+// on that event made basecoatui.com, heypi.dev, devpu.sh and pagescms.org all fail as bare 30s
+// timeouts. This was misread as headless-browser detection; it is not, and a real headed Chrome
+// fails on it identically.
+
+test("a stalled <script defer> still captures clean (DOMContentLoaded never fires)", async () => {
+  tempDataDir();
+  const slug = await captureWeb(`${base}deferred-hang.html`, { note: "defer" });
+
+  const meta = readMeta(slug);
+  assert.equal(meta.status, "needs-analysis", "a blocked DOMContentLoaded must not degrade to partial");
+  assert.ok(meta.title.includes("DeferCo"));
+  const dir = designDir(slug);
+  for (const f of ["desktop.png", "desktop-fold.png", "mobile.png", "page.html", "tokens.json"]) {
+    assert.ok(fs.existsSync(path.join(dir, f)), `missing ${f}`);
+  }
+  // The mobile pass navigates too, so it must share the wait semantics or it alone forces "partial".
+  assert.ok(fs.statSync(path.join(dir, "mobile.png")).size > 1000);
+});
+
+test("gotoReady classifies each failure mode distinctly", async (t) => {
+  const browser: Browser = await chromium.launch();
+  const open = async () => (await browser.newContext()).newPage();
+  try {
+    await t.test("unreachable host — no HTTP response at all", async () => {
+      const page = await open();
+      // Reserved-by-RFC6761 name: guaranteed not to resolve, so this never reaches a server.
+      await assert.rejects(
+        () => gotoReady(page, "http://good-eye-nonexistent.invalid/"),
+        (err: unknown) => {
+          assert.ok(err instanceof CaptureError);
+          assert.equal(err.kind, "unreachable");
+          assert.match(err.message, /no HTTP response|never responded|sent no HTTP/i);
+          return true;
+        }
+      );
+    });
+
+    await t.test("HTTP error — the server answered, with a status", async () => {
+      const page = await open();
+      await assert.rejects(
+        () => gotoReady(page, `${base}missing-page`),
+        (err: unknown) => {
+          assert.ok(err instanceof CaptureError);
+          assert.equal(err.kind, "http-error");
+          assert.match(err.message, /HTTP 404/);
+          return true;
+        }
+      );
+    });
+
+    await t.test("403 is blocked, not a plain http-error — a real browser may still get in", async () => {
+      // Measured: fourseasons.com and passalacqua.it both 403 headless and 200 in headed Chrome,
+      // so this status has to reach the retry rather than being filed with 404s and given up on.
+      const page = await open();
+      await assert.rejects(
+        () => gotoReady(page, `${base}forbidden`),
+        (err: unknown) => {
+          assert.ok(err instanceof CaptureError);
+          assert.equal(err.kind, "blocked", "403 must be retryable");
+          assert.match(err.message, /real browser/i);
+          return true;
+        }
+      );
+    });
+
+    await t.test("blocked — 200, but the document never finishes parsing", async () => {
+      const page = await open();
+      await assert.rejects(
+        () => gotoReady(page, `${base}never-ends`),
+        (err: unknown) => {
+          assert.ok(err instanceof CaptureError);
+          assert.equal(err.kind, "blocked");
+          // The whole point of the classification: the message has to tell the user a real
+          // browser is the fix, not leave them staring at "Timeout 30000ms exceeded".
+          assert.match(err.message, /challenge|interstitial/i);
+          assert.match(err.message, /real browser/i);
+          return true;
+        }
+      );
+    });
+
+    await t.test("a slow-but-real document is NOT blocked, it just needs longer", async () => {
+      // The negative case for the stall classification, and a real regression: fourseasons.com
+      // takes 32s to fire DOMContentLoaded. A flat budget called that "blocked" and threw away a
+      // perfectly good capture, so a document still mid-parse gets the longer parse budget.
+      const page = await open();
+      const t0 = Date.now();
+      assert.deepEqual(await gotoReady(page, `${base}slow-parse`), []);
+      assert.ok(Date.now() - t0 > 2000, "must have outlasted the deferred-script budget");
+      assert.ok((await page.title()).includes("SlowCo"));
+    });
+
+    await t.test("blocked — 200, parses fine, but serves a challenge page", async () => {
+      const page = await open();
+      await assert.rejects(
+        () => gotoReady(page, `${base}challenge.html`),
+        (err: unknown) => {
+          assert.ok(err instanceof CaptureError);
+          assert.equal(err.kind, "blocked");
+          return true;
+        }
+      );
+    });
+
+    await t.test("a stalled deferred script is dropped, leaving a fully loaded page", async () => {
+      const page = await open();
+      const blocked = await gotoReady(page, `${base}deferred-hang.html`); // must not reject
+
+      assert.deepEqual(blocked, [`${base}hang.js`], "the stalled script is reported for reuse");
+      assert.ok((await page.title()).includes("DeferCo"));
+      // The page must end up genuinely healthy, not merely screenshot-able. document.fonts.ready
+      // is the one that matters: page.screenshot() awaits it unconditionally, so if the reload
+      // left the document pinned, every screenshot downstream would hang for its full timeout.
+      assert.equal(await page.evaluate(() => document.readyState), "complete");
+      await page.evaluate(() => document.fonts.ready); // would hang, and time out the test, if pinned
+    });
+
+    await t.test("a healthy page reports nothing blocked and needs no reload", async () => {
+      const page = await open();
+      assert.deepEqual(await gotoReady(page, `${base}index.html`), []);
+    });
+  } finally {
+    await browser.close();
+  }
+});
+
+test("challenge detection does not fire on a page that merely talks like one", async () => {
+  // The negative case. Matching on the "Just a moment" title or "checking your browser" copy would
+  // misclassify legitimate sites as blocked and send them down a pointless real-browser retry —
+  // so detection keys on the cdn-cgi / __cf_chl plumbing instead, which prose cannot imitate.
+  const browser = await chromium.launch();
+  try {
+    const page = await (await browser.newContext()).newPage();
+
+    await page.goto(`${base}patient.html`);
+    assert.equal(await looksChallenged(page), false, "prose about checking your browser is not a challenge");
+
+    await page.goto(`${base}challenge.html`);
+    assert.equal(await looksChallenged(page), true, "real challenge markup must still be caught");
+
+    await page.goto(`${base}index.html`);
+    assert.equal(await looksChallenged(page), false, "an ordinary page is not a challenge");
+  } finally {
+    await browser.close();
+  }
+});
+
+test("a page that merely talks like a challenge captures normally, end to end", async () => {
+  tempDataDir();
+  const slug = await captureWeb(`${base}patient.html`, { note: "negative case" });
+  assert.equal(readMeta(slug).status, "needs-analysis");
 });

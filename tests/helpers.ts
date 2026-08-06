@@ -52,6 +52,29 @@ export async function startFixtureServer(): Promise<{ base: string; close: () =>
       res.write("streaming");
       return; // deliberately never res.end()
     }
+    // A script that never finishes loading. As a `defer` subresource this pins DOMContentLoaded
+    // open forever — the production failure, reproduced without touching the network.
+    if (req.url === "/hang.js") {
+      res.writeHead(200, { "content-type": "application/javascript" });
+      return; // headers only, body never ends
+    }
+    // How an edge WAF refuses an automated client: a hard 403 before any page is served.
+    if (req.url === "/forbidden") { res.writeHead(403); return res.end("Forbidden"); }
+    // A document that arrives slowly but does arrive — fourseasons.com takes 32s to reach
+    // DOMContentLoaded. It must outlive the deferred-script budget without being called blocked.
+    if (req.url === "/slow-parse") {
+      res.writeHead(200, { "content-type": "text/html" });
+      res.write("<!doctype html><html><head><title>SlowCo</title></head><body><h1>Slow</h1>");
+      setTimeout(() => res.end("<p>but fine</p></body></html>"), 3000);
+      return;
+    }
+    // A document that never finishes arriving, so the parser stays in readyState "loading".
+    // This is the shape a stalled bot challenge has, and what must classify as "blocked".
+    if (req.url === "/never-ends") {
+      res.writeHead(200, { "content-type": "text/html" });
+      res.write("<!doctype html><html><head><title>Stuck</title></head><body><p>partial");
+      return; // deliberately never res.end()
+    }
     const file = path.join(fixtures, req.url === "/" ? "index.html" : req.url!.slice(1));
     if (!fs.existsSync(file)) { res.writeHead(404); return res.end(); }
     res.writeHead(200, { "content-type": file.endsWith(".css") ? "text/css" : "text/html" });

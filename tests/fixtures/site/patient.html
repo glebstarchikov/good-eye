@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Just a moment — a real page that merely says so</title>
+</head>
+<body>
+  <!-- The negative case for challenge detection. This page wears every *surface* marking of an
+       interstitial — the title, the "checking your browser" phrasing — but none of the plumbing.
+       Matching on those strings instead of on the cdn-cgi/__cf_chl markers would misclassify a
+       legitimate site as blocked and send it down the real-browser retry for nothing. -->
+  <h1>Just a moment</h1>
+  <p>We are checking your browser, verifying you are human, and doing a security check.</p>
+  <p>None of that is true — this is an ordinary page that happens to use those words.</p>
+</body>
+</html>

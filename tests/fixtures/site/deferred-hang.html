@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>DeferCo — DOMContentLoaded never fires</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- The whole bug in one tag. Per the HTML spec's end-of-parsing steps, DOMContentLoaded is
+       withheld until every deferred script has executed, so this never-resolving request pins the
+       event forever while the document below parses completely. This is exactly what a
+       DNS-blackholed analytics beacon (static.cloudflareinsights.com) does to a real site. -->
+  <script defer src="/hang.js"></script>
+</head>
+<body>
+  <header><strong>DeferCo</strong></header>
+  <nav><a href="#">Product</a> <a href="#">Pricing</a></nav>
+  <main>
+    <section class="hero"><h1>Parsed, but never "loaded"</h1><p>readyState stops at interactive.</p></section>
+    <section class="features"><h2>Features</h2><p>Feature one. Feature two.</p></section>
+    <section class="pricing"><h2>Pricing</h2><p>Free. Pro. Team.</p></section>
+  </main>
+  <footer><p>© DeferCo</p></footer>
+</body>
+</html>
