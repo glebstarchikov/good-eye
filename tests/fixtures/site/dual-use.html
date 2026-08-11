@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>DualUseCo — one URL, two resource types</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- /dual-use hangs when requested as a script, so recovery blocks that URL. -->
+  <script defer src="/dual-use"></script>
+</head>
+<body>
+  <header><strong>DualUseCo</strong></header>
+  <main>
+    <section class="hero">
+      <h1>The same address is not the same request</h1>
+      <!-- ...but the identical URL also serves a real image. A route that aborts on URL alone
+           would take this picture out with the dead script, quietly stripping content from the
+           capture that recovery exists to save. -->
+      <img id="shared" src="/dual-use" width="64" height="64" alt="served from the blocked URL">
+      <p>The image must survive the script being dropped.</p>
+    </section>
+    <section class="features"><h2>Features</h2><p>Feature one. Feature two.</p></section>
+  </main>
+  <footer><p>© DualUseCo</p></footer>
+</body>
+</html>

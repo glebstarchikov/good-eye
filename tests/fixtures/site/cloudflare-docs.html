@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Reading a Cloudflare challenge — DevBlogCo</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- The negative case for structural challenge detection, and a realistic one: this library
+       captures developer-tool marketing and docs sites, which are exactly the sites that write
+       about Cloudflare. Every challenge marker appears here as prose or sample text, none of it as
+       live plumbing. Scanning the serialized HTML for these strings would refuse the page outright
+       — retry included — and no headed browser could ever rescue it, because the content is the
+       page. Detection therefore keys on a loaded challenge script or its container element. -->
+  <header><strong>DevBlogCo</strong></header>
+  <main>
+    <section class="hero">
+      <h1>What Cloudflare's interstitial actually sends</h1>
+      <p>A challenge page loads <code>/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1</code>
+         and sets a <code>__cf_chl_</code> cookie before redirecting you back.</p>
+    </section>
+    <section class="features">
+      <h2>Detecting it</h2>
+      <pre><code>if (html.includes("cf-browser-verification")) { /* naive: matches this very page */ }
+if (html.includes("cf_chl_opt")) { /* also naive */ }</code></pre>
+      <p>Matching on those strings anywhere in the document flags articles like this one.</p>
+    </section>
+  </main>
+  <footer><p>© DevBlogCo</p></footer>
+</body>
+</html>

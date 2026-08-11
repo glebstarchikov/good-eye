@@ -44,12 +44,89 @@ export function seedEntry(meta: Meta, analysis?: string): void {
 export async function startFixtureServer(): Promise<{ base: string; close: () => void }> {
   const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "site");
   const sockets = new Set<import("node:net").Socket>();
+  let flakyReloadServed = 0;
+  let deadReloadServed = 0;
   const server = http.createServer((req, res) => {
     // /hang holds the connection open forever, so a page fetching it never reaches
     // networkidle — mirrors analytics-heavy production sites (Stripe et al.).
     if (req.url === "/hang") {
       res.writeHead(200, { "content-type": "text/plain" });
       res.write("streaming");
+      return; // deliberately never res.end()
+    }
+    // A script that never finishes loading. As a `defer` subresource this pins DOMContentLoaded
+    // open forever — the production failure, reproduced without touching the network.
+    if (req.url === "/hang.js" || req.url === "/hang-async.js") {
+      res.writeHead(200, { "content-type": "application/javascript" });
+      return; // headers only, body never ends
+    }
+    // How an edge WAF refuses an automated client: a hard 403 before any page is served.
+    if (req.url === "/forbidden") { res.writeHead(403); return res.end("Forbidden"); }
+    // A WAF interstitial served *with* an error status — Cloudflare has long used 503 for this.
+    // The body is a challenge, so it must classify as blocked (retryable), not as an http-error.
+    if (req.url === "/challenge-503") {
+      res.writeHead(503, { "content-type": "text/html" });
+      return res.end(
+        '<!doctype html><html><head><title>Just a moment...</title></head><body>' +
+        '<div id="challenge-running">Checking your browser</div>' +
+        '<script src="/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1"></script></body></html>'
+      );
+    }
+    // One URL, two resource types — the shape a content-negotiating endpoint has. As a script it
+    // hangs forever; as anything else it serves a real image. Recovery blocks this URL, so a
+    // URL-only abort would strip the picture out of the very capture it is trying to rescue.
+    if (req.url === "/dual-use") {
+      if (req.headers["sec-fetch-dest"] === "script") return; // hang, never answer
+      res.writeHead(200, { "content-type": "image/gif" });
+      // 1x1 transparent GIF
+      return res.end(Buffer.from("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", "base64"));
+    }
+    // A gating script that redirects before stalling: the pending request ends up at the redirect
+    // target, while the DOM still says /redirected-script.js. Recovery must not depend on those
+    // matching. 302 -> /hang.js, which never completes.
+    if (req.url === "/redirected-script.js") {
+      res.writeHead(302, { location: "/hang.js" });
+      return res.end();
+    }
+    // Serves the stalled page once, then accepts the reload connection and never answers at all,
+    // so page.reload() rejects rather than returning a response.
+    if (req.url === "/dead-reload") {
+      if (deadReloadServed++ === 0) {
+        res.writeHead(200, { "content-type": "text/html" });
+        return res.end(
+          '<!doctype html><html><head><title>DeadReloadCo</title>' +
+          '<script defer src="/hang.js"></script></head><body><h1>Dead</h1></body></html>'
+        );
+      }
+      return; // no writeHead, no end — the reload never gets headers
+    }
+    // Serves the stalled-deferred-script page once, then rate-limits. Mirrors an origin that
+    // throttles the immediate reload: the 429 body parses fine and carries no challenge marker,
+    // so an unchecked reload response would capture the error page as though it were the site.
+    if (req.url === "/flaky-reload") {
+      if (flakyReloadServed++ === 0) {
+        res.writeHead(200, { "content-type": "text/html" });
+        return res.end(
+          '<!doctype html><html><head><title>FlakyCo</title>' +
+          '<script defer src="/hang.js"></script></head><body><h1>Flaky</h1></body></html>'
+        );
+      }
+      res.writeHead(429, { "content-type": "text/html" });
+      return res.end("<!doctype html><html><head><title>Too Many Requests</title></head><body>Slow down</body></html>");
+    }
+    // A document that arrives slowly but does arrive — fourseasons.com takes 32s to reach
+    // DOMContentLoaded. It must outlive the deferred-script budget without being called blocked.
+    if (req.url === "/slow-parse") {
+      res.writeHead(200, { "content-type": "text/html" });
+      res.write("<!doctype html><html><head><title>SlowCo</title></head><body><h1>Slow</h1>");
+      setTimeout(() => res.end("<p>but fine</p></body></html>"), 3000);
+      return;
+    }
+    // A document that never finishes arriving, so the parser stays in readyState "loading".
+    // This is the shape a stalled bot challenge has, and what must classify as "blocked".
+    if (req.url === "/never-ends") {
+      res.writeHead(200, { "content-type": "text/html" });
+      res.write("<!doctype html><html><head><title>Stuck</title></head><body><p>partial");
       return; // deliberately never res.end()
     }
     const file = path.join(fixtures, req.url === "/" ? "index.html" : req.url!.slice(1));
