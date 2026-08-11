@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { chromium, type Page, type Response } from "playwright";
+import { chromium, type Page, type Request, type Response } from "playwright";
 import { Vibrant } from "node-vibrant/node";
 import { designDir, ensureDir, makeSlug } from "../lib/paths.js";
 import { MetaSchema, domainFromUrl, writeMeta, type Meta } from "../lib/meta.js";
@@ -9,8 +9,8 @@ const DESKTOP = { width: 1440, height: 900 };
 const MOBILE = { width: 390, height: 844 };
 
 /** Budget for the server to return response headers. A reachable host commits in ~1s; this only
- * runs long for a genuinely dead one. */
-const NAV_TIMEOUT_MS = 30000;
+ * runs long for a genuinely dead one. Overridable on the same grounds as the DOM budget below. */
+const navTimeoutMs = () => Number(process.env.GOOD_EYE_NAV_TIMEOUT_MS) || 30000;
 /** How long to let a *parsed* document withhold DOMContentLoaded before blaming a deferred script.
  * Overridable so the tests can exercise the stall paths without burning 15s apiece; also a genuine
  * escape hatch on a slow link. Read per call, not at import, so a test can set it after loading. */
@@ -22,15 +22,20 @@ const domTimeoutMs = () => Number(process.env.GOOD_EYE_DOM_TIMEOUT_MS) || 15000;
  * time on a page that was failing anyway. */
 const parseTimeoutMs = () => domTimeoutMs() * 3;
 
-/** Cloudflare interstitials parse and fire DOMContentLoaded perfectly well — they're ordinary HTML
- * pages. Only their markup gives them away. Match on the challenge plumbing rather than on the
- * "Just a moment…" title, so a page that merely uses that phrase in its copy can't trip this. */
-const CHALLENGE_MARKERS = [
-  "/cdn-cgi/challenge-platform/",
-  "__cf_chl_",
-  "cf-browser-verification",
-  "cf_chl_opt",
-];
+/** A challenge is identified by plumbing that is *live in the document* — a loaded challenge
+ * script, or the container it renders into. Deliberately not a substring scan of the serialized
+ * HTML: a page that merely writes `/cdn-cgi/challenge-platform/` in prose or a config sample is a
+ * normal page, and this library captures developer-tool sites that plausibly do exactly that.
+ * Matching text would refuse them outright, retry included. Same reasoning that keeps the
+ * "Just a moment…" title out of this list — prose can imitate a challenge, structure cannot. */
+const CHALLENGE_SELECTORS = [
+  'script[src*="/cdn-cgi/challenge-platform/"]',
+  "#challenge-running",
+  "#cf-challenge-running",
+  "#challenge-error-title",
+  '[id^="cf-chl"]',
+  '[class*="cf-browser-verification"]',
+].join(", ");
 
 export type CaptureFailureKind =
   | "unreachable"  // no HTTP response at all — dead host, DNS, or a network-level block
@@ -59,11 +64,11 @@ const PROBE_TIMEOUT_MS = 5000;
  * strictly worse than the failure this module exists to fix. A page too busy to answer is treated
  * as the pessimistic case, which is what `fallback` carries.
  */
-async function probe<T>(page: Page, fn: () => T, fallback: T): Promise<T> {
+async function probe<T, A>(page: Page, fn: (arg: A) => T, fallback: T, arg?: A): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
-      page.evaluate(fn).catch(() => fallback),
+      page.evaluate(fn as (a: unknown) => T, arg).catch(() => fallback),
       new Promise<T>((resolve) => { timer = setTimeout(() => resolve(fallback), PROBE_TIMEOUT_MS); }),
     ]);
   } finally {
@@ -71,13 +76,30 @@ async function probe<T>(page: Page, fn: () => T, fallback: T): Promise<T> {
   }
 }
 
-/** Classify a navigation response the same way wherever it came from — first load or reload. */
-function assertServed(url: string, resp: Response | null, when = ""): number {
+/**
+ * Navigate (or reload) and classify the outcome. Both entry points share this so a failure is
+ * described the same way wherever it happened: an unclassified Playwright error escaping from the
+ * reload would bypass captureWeb's real-browser retry and land the user back at a bare timeout,
+ * which is the failure this module exists to remove.
+ */
+async function navigate(page: Page, url: string, go: () => Promise<Response | null>, when = ""): Promise<number> {
+  let resp: Response | null;
+  try {
+    resp = await go();
+  } catch (err) {
+    throw new CaptureError(
+      "unreachable",
+      `${url} sent no HTTP response within ${navTimeoutMs() / 1000}s${when} — the host is down, ` +
+        `DNS is failing, or the network is blocking it. (${firstLine(err)})`
+    );
+  }
   if (!resp) throw new CaptureError("unreachable", `${url} produced no HTTP response${when}.`);
+
   const status = resp.status();
-  // 403 is the one status worth a second attempt: it's how an edge WAF refuses an automated
-  // client outright, and a real browser is frequently served the page instead. Measured on
-  // fourseasons.com and passalacqua.it — both 403 headless, both 200 in headed Chrome.
+  if (status < 400) return status;
+
+  // 403 is refusal of the client itself, and a real browser is frequently served the page instead.
+  // Measured on fourseasons.com and passalacqua.it — both 403 headless, both 200 in headed Chrome.
   if (status === 403) {
     throw new CaptureError(
       "blocked",
@@ -85,13 +107,23 @@ function assertServed(url: string, resp: Response | null, when = ""): number {
         `any page is served. Retry in a real browser, or capture by hand.`
     );
   }
-  if (status >= 400) throw new CaptureError("http-error", `Failed to load ${url}: HTTP ${status}${when}`);
-  return status;
+  // A WAF often serves its interstitial *with* an error status — 503 and 429 are both common — so
+  // the body has to be examined before the status is taken at face value. Filing that as a plain
+  // http-error would deny it the retry that is exactly what it needs. Error pages are tiny and
+  // parse immediately, so the wait costs an ordinary 404 nothing measurable.
+  await page.waitForLoadState("domcontentloaded", { timeout: 2000 }).catch(() => {});
+  if (await looksChallenged(page)) {
+    throw new CaptureError(
+      "blocked",
+      `${url} returned HTTP ${status}${when}, but the body is a bot challenge rather than an ` +
+        `error page. Retry in a real browser, or capture by hand.`
+    );
+  }
+  throw new CaptureError("http-error", `Failed to load ${url}: HTTP ${status}${when}`);
 }
 
 export async function looksChallenged(page: Page): Promise<boolean> {
-  const html = await page.content().catch(() => "");
-  return CHALLENGE_MARKERS.some((m) => html.includes(m));
+  return probe(page, (sel: string) => !!document.querySelector(sel), false, CHALLENGE_SELECTORS);
 }
 
 /**
@@ -122,23 +154,25 @@ export async function gotoReady(page: Page, url: string, preBlock: string[] = []
   // the parser itself (readyState stays "loading", handled below), and non-script subresources
   // don't gate the event at all. So this is the complete set of abort candidates, and images or
   // XHRs still in flight are left alone.
-  const pendingScripts = new Set<string>();
-  page.on("request", (r) => { if (r.resourceType() === "script") pendingScripts.add(r.url()); });
+  //
+  // Each pending request is stored with its full redirect chain, because the URL that stalls is
+  // often not the one the reload will ask for. A gating script that 302s before hanging leaves the
+  // *target* pending, so blocking only that does nothing — the reload re-requests the original and
+  // follows the redirect again, since a route is matched when the request is issued and not
+  // re-consulted for the hop. Blocking every URL in the chain stops it at the first link.
+  const pendingScripts = new Map<string, string[]>();
+  page.on("request", (r) => {
+    if (r.resourceType() !== "script") return;
+    const chain: string[] = [];
+    for (let hop: Request | null = r; hop; hop = hop.redirectedFrom()) chain.push(hop.url());
+    pendingScripts.set(r.url(), chain);
+  });
   const settle = (r: { url(): string }) => { pendingScripts.delete(r.url()); };
   page.on("requestfinished", settle);
   page.on("requestfailed", settle);
 
-  let resp;
-  try {
-    resp = await page.goto(url, { waitUntil: "commit", timeout: NAV_TIMEOUT_MS });
-  } catch (err) {
-    throw new CaptureError(
-      "unreachable",
-      `${url} sent no HTTP response within ${NAV_TIMEOUT_MS / 1000}s — the host is down, DNS is ` +
-        `failing, or the network is blocking it. (${firstLine(err)})`
-    );
-  }
-  const status = assertServed(url, resp);
+  const status = await navigate(page, url, () =>
+    page.goto(url, { waitUntil: "commit", timeout: navTimeoutMs() }));
 
   const reachedDom = (ms: number) =>
     page.waitForLoadState("domcontentloaded", { timeout: ms }).then(() => true, () => false);
@@ -152,12 +186,17 @@ export async function gotoReady(page: Page, url: string, preBlock: string[] = []
   if (!ok && (await stillParsing())) ok = await reachedDom(parseTimeoutMs() - domTimeoutMs());
 
   if (!ok) {
-    // Which pending script is actually withholding the event? Only a gating one can: `async` and
-    // dynamically-inserted scripts never hold DOMContentLoaded open. Note what counts as gating —
-    // a module script is deferred *by default*, so it gates the event even though
+    // Name the gating script when we can, for the log line only. Note what counts as gating — a
+    // module script is deferred *by default*, so it gates the event even though
     // HTMLScriptElement.defer reads false for it (that property reflects an attribute modules
     // don't set). Filtering on `defer` alone would miss the very script that motivated this fix:
     // the Cloudflare beacon ships as type="module".
+    //
+    // Recovery deliberately does NOT hinge on matching one of these to a pending URL. The request
+    // that actually stalls is often not the one written in the DOM — a gating script can redirect
+    // before stalling, and a module that downloads fine can have a stalled import several levels
+    // down the graph. In both cases an exact-URL intersection comes back empty and we would refuse
+    // to recover from a page we can plainly fix, so an outstanding script request is enough.
     const gating = await probe(page, () =>
       Array.from(document.querySelectorAll("script[src]"))
         .filter((el) => {
@@ -165,13 +204,14 @@ export async function gotoReady(page: Page, url: string, preBlock: string[] = []
           return s.async ? false : s.type === "module" || s.defer;
         })
         .map((el) => (el as HTMLScriptElement).src), [] as string[]);
-    const blame = [...pendingScripts].filter((u) => gating.includes(u));
+    const chains = [...pendingScripts.values()];
+    const blame = chains.flat().filter((u) => gating.includes(u));
     // But abort *every* outstanding script, not just the one to blame. A non-gating script left
     // hanging still keeps the load event — and with it document.fonts.ready — from ever firing,
     // and page.screenshot() waits on that unconditionally: measured, sparing one costs the whole
     // capture rather than that one script. Nothing healthy is caught, because anything still
     // pending after the full budget has already proven dead.
-    const stalled = [...pendingScripts];
+    const stalled = [...new Set(chains.flat())];
 
     if (await stillParsing()) {
       throw new CaptureError(
@@ -181,11 +221,11 @@ export async function gotoReady(page: Page, url: string, preBlock: string[] = []
           `challenge or interstitial looks like. Retry in a real browser, or capture by hand.`
       );
     }
-    if (!blame.length) {
+    if (!stalled.length) {
       throw new CaptureError(
         "blocked",
         `${url} answered HTTP ${status} and parsed, but never fired DOMContentLoaded within ` +
-          `${domTimeoutMs() / 1000}s with no outstanding gating script to blame. Capture by hand.`
+          `${domTimeoutMs() / 1000}s with no outstanding script request to drop. Capture by hand.`
       );
     }
 
@@ -193,17 +233,17 @@ export async function gotoReady(page: Page, url: string, preBlock: string[] = []
     // deferred bundle on a slow link must be given time to arrive, because aborting one would
     // leave the page unhydrated and quietly capture a broken screenshot.
     console.error(
-      `good-eye: ${url} — DOMContentLoaded is blocked by ${blame.join(", ")}; dropping ` +
-        `${stalled.length} dead script request(s) and reloading`
+      `good-eye: ${url} — DOMContentLoaded is blocked by ${blame.join(", ") || "a stalled script"}; ` +
+        `dropping ${stalled.length} dead script request(s) and reloading`
     );
     for (const u of stalled) {
       blocked.add(u);
       await page.route(u, (r) => r.abort());
     }
-    // The reload gets the same scrutiny as the first navigation. Dropping its response would let a
-    // rate-limited 429 or a WAF 403 through as if it were the site, and the error page — which
-    // parses fine and carries no challenge marker — would be captured and filed as a real entry.
-    assertServed(url, await page.reload({ waitUntil: "commit", timeout: NAV_TIMEOUT_MS }), " on reload");
+    // The reload gets the same scrutiny as the first navigation, rejections included: a raw
+    // Playwright error escaping here would skip captureWeb's real-browser retry and land the user
+    // right back at the bare timeout this module exists to remove.
+    await navigate(page, url, () => page.reload({ waitUntil: "commit", timeout: navTimeoutMs() }), " on reload");
     if (!(await reachedDom(parseTimeoutMs()))) {
       throw new CaptureError(
         "blocked",

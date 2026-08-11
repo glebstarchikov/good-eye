@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>RedirectCo — the stalled URL is not the one in the DOM</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- This src 302s to /hang.js, which never completes. So the request left pending is the
+       redirect *target*, while the DOM still reports the original src. Recovery must not depend on
+       those two strings matching — the same gap opens when a module downloads fine but one of its
+       imports stalls several levels down the graph. -->
+  <script defer src="/redirected-script.js"></script>
+</head>
+<body>
+  <header><strong>RedirectCo</strong></header>
+  <main>
+    <section class="hero"><h1>Redirected then stalled</h1><p>The pending URL moved.</p></section>
+    <section class="features"><h2>Features</h2><p>Feature one. Feature two.</p></section>
+  </main>
+  <footer><p>© RedirectCo</p></footer>
+</body>
+</html>

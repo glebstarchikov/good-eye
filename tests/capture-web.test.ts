@@ -13,10 +13,15 @@ let close: () => void;
 
 before(async () => {
   ({ base, close } = await startFixtureServer());
-  // Every stall path below waits out this budget; 15s apiece would dominate the suite.
+  // Every stall path below waits out these budgets; the real 15s/30s would dominate the suite.
   process.env.GOOD_EYE_DOM_TIMEOUT_MS = "2000";
+  process.env.GOOD_EYE_NAV_TIMEOUT_MS = "3000";
 });
-after(() => { close(); delete process.env.GOOD_EYE_DOM_TIMEOUT_MS; });
+after(() => {
+  close();
+  delete process.env.GOOD_EYE_DOM_TIMEOUT_MS;
+  delete process.env.GOOD_EYE_NAV_TIMEOUT_MS;
+});
 
 test("captureWeb produces artifacts, tokens, and provisional meta", async () => {
   tempDataDir();
@@ -208,6 +213,49 @@ test("gotoReady classifies each failure mode distinctly", async (t) => {
       );
     });
 
+    await t.test("a challenge served with an error status is blocked, not http-error", async () => {
+      // WAFs commonly ship the interstitial with 503 or 429. Taking the status at face value would
+      // file it as an ordinary error and deny it the real-browser retry that is exactly its remedy.
+      const page = await open();
+      await assert.rejects(
+        () => gotoReady(page, `${base}challenge-503`),
+        (err: unknown) => {
+          assert.ok(err instanceof CaptureError);
+          assert.equal(err.kind, "blocked", "a 503 carrying a challenge body must stay retryable");
+          assert.match(err.message, /HTTP 503/);
+          assert.match(err.message, /real browser/i);
+          return true;
+        }
+      );
+    });
+
+    await t.test("a rejected reload is classified, not leaked as a raw Playwright error", async () => {
+      // The reload can fail outright rather than answering. An unclassified error escaping here
+      // would bypass captureWeb's retry and put the user back at a bare timeout string.
+      const page = await open();
+      await assert.rejects(
+        () => gotoReady(page, `${base}dead-reload`),
+        (err: unknown) => {
+          assert.ok(err instanceof CaptureError, "must be classified, not a raw TimeoutError");
+          assert.equal(err.kind, "unreachable");
+          assert.match(err.message, /on reload/);
+          return true;
+        }
+      );
+    });
+
+    await t.test("recovery works when the stalled URL is not the one in the DOM", async () => {
+      // The gating script 302s before stalling, so the pending request is the redirect target
+      // while the DOM still lists the original src. Recovery must not require those to match —
+      // the same gap opens for a stalled import deep in a module graph.
+      const page = await open();
+      const blocked = await gotoReady(page, `${base}redirect-hang.html`);
+
+      assert.ok(blocked.length > 0, "must still recover when no DOM src matches the pending URL");
+      assert.ok((await page.title()).includes("RedirectCo"));
+      assert.equal(await page.evaluate(() => document.readyState), "complete");
+    });
+
     await t.test("blocked — 200, parses fine, but serves a challenge page", async () => {
       const page = await open();
       await assert.rejects(
@@ -281,6 +329,13 @@ test("challenge detection does not fire on a page that merely talks like one", a
 
     await page.goto(`${base}patient.html`);
     assert.equal(await looksChallenged(page), false, "prose about checking your browser is not a challenge");
+
+    // The harder negative: a page that prints every challenge marker verbatim as documentation.
+    // A substring scan of the serialized HTML flags this, and no headed retry could ever rescue it
+    // — the markers *are* the content. This library captures developer-tool sites, so it is a
+    // realistic page to meet, not a contrived one.
+    await page.goto(`${base}cloudflare-docs.html`);
+    assert.equal(await looksChallenged(page), false, "an article about challenges is not a challenge");
 
     await page.goto(`${base}challenge.html`);
     assert.equal(await looksChallenged(page), true, "real challenge markup must still be caught");

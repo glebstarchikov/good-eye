@@ -45,6 +45,7 @@ export async function startFixtureServer(): Promise<{ base: string; close: () =>
   const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "site");
   const sockets = new Set<import("node:net").Socket>();
   let flakyReloadServed = 0;
+  let deadReloadServed = 0;
   const server = http.createServer((req, res) => {
     // /hang holds the connection open forever, so a page fetching it never reaches
     // networkidle — mirrors analytics-heavy production sites (Stripe et al.).
@@ -61,6 +62,35 @@ export async function startFixtureServer(): Promise<{ base: string; close: () =>
     }
     // How an edge WAF refuses an automated client: a hard 403 before any page is served.
     if (req.url === "/forbidden") { res.writeHead(403); return res.end("Forbidden"); }
+    // A WAF interstitial served *with* an error status — Cloudflare has long used 503 for this.
+    // The body is a challenge, so it must classify as blocked (retryable), not as an http-error.
+    if (req.url === "/challenge-503") {
+      res.writeHead(503, { "content-type": "text/html" });
+      return res.end(
+        '<!doctype html><html><head><title>Just a moment...</title></head><body>' +
+        '<div id="challenge-running">Checking your browser</div>' +
+        '<script src="/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1"></script></body></html>'
+      );
+    }
+    // A gating script that redirects before stalling: the pending request ends up at the redirect
+    // target, while the DOM still says /redirected-script.js. Recovery must not depend on those
+    // matching. 302 -> /hang.js, which never completes.
+    if (req.url === "/redirected-script.js") {
+      res.writeHead(302, { location: "/hang.js" });
+      return res.end();
+    }
+    // Serves the stalled page once, then accepts the reload connection and never answers at all,
+    // so page.reload() rejects rather than returning a response.
+    if (req.url === "/dead-reload") {
+      if (deadReloadServed++ === 0) {
+        res.writeHead(200, { "content-type": "text/html" });
+        return res.end(
+          '<!doctype html><html><head><title>DeadReloadCo</title>' +
+          '<script defer src="/hang.js"></script></head><body><h1>Dead</h1></body></html>'
+        );
+      }
+      return; // no writeHead, no end — the reload never gets headers
+    }
     // Serves the stalled-deferred-script page once, then rate-limits. Mirrors an origin that
     // throttles the immediate reload: the 429 body parses fine and carries no challenge marker,
     // so an unchecked reload response would capture the error page as though it were the site.
