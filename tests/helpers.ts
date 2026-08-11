@@ -72,6 +72,15 @@ export async function startFixtureServer(): Promise<{ base: string; close: () =>
         '<script src="/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1"></script></body></html>'
       );
     }
+    // One URL, two resource types — the shape a content-negotiating endpoint has. As a script it
+    // hangs forever; as anything else it serves a real image. Recovery blocks this URL, so a
+    // URL-only abort would strip the picture out of the very capture it is trying to rescue.
+    if (req.url === "/dual-use") {
+      if (req.headers["sec-fetch-dest"] === "script") return; // hang, never answer
+      res.writeHead(200, { "content-type": "image/gif" });
+      // 1x1 transparent GIF
+      return res.end(Buffer.from("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", "base64"));
+    }
     // A gating script that redirects before stalling: the pending request ends up at the redirect
     // target, while the DOM still says /redirected-script.js. Recovery must not depend on those
     // matching. 302 -> /hang.js, which never completes.

@@ -11,16 +11,23 @@ const MOBILE = { width: 390, height: 844 };
 /** Budget for the server to return response headers. A reachable host commits in ~1s; this only
  * runs long for a genuinely dead one. Overridable on the same grounds as the DOM budget below. */
 const navTimeoutMs = () => Number(process.env.GOOD_EYE_NAV_TIMEOUT_MS) || 30000;
-/** How long to let a *parsed* document withhold DOMContentLoaded before blaming a deferred script.
- * Overridable so the tests can exercise the stall paths without burning 15s apiece; also a genuine
- * escape hatch on a slow link. Read per call, not at import, so a test can set it after loading. */
-const domTimeoutMs = () => Number(process.env.GOOD_EYE_DOM_TIMEOUT_MS) || 15000;
-/** How long to let a document that is *still parsing* keep going before calling it blocked. Much
- * more patient, because the two stalls carry very different costs: a document stuck at readyState
+/**
+ * How long to let a *parsed* document withhold DOMContentLoaded before blaming a deferred script.
+ *
+ * Not shorter than the 30s this module's `goto` used to allow, deliberately. The old code waited
+ * the full 30s for the event and then failed; anything under that here would take a required
+ * bundle that merely downloads slowly, abort it as dead, and reload without it — turning a page
+ * the previous version loaded perfectly into a silently unhydrated capture. Recovery must never be
+ * reachable in less time than the old path took to succeed.
+ */
+const domTimeoutMs = () => Number(process.env.GOOD_EYE_DOM_TIMEOUT_MS) || 30000;
+/** How long to let a document that is *still parsing* keep going before calling it blocked. More
+ * patient again, because the two stalls carry different costs: a document stuck at readyState
  * "loading" can simply be a slow origin — fourseasons.com genuinely takes 32s to reach
  * DOMContentLoaded — and calling that blocked costs the user a capture, whereas waiting only costs
- * time on a page that was failing anyway. */
-const parseTimeoutMs = () => domTimeoutMs() * 3;
+ * time on a page that was failing anyway. Independent of the budget above rather than a multiple
+ * of it, so tuning one can't silently move the other. */
+const parseTimeoutMs = () => Number(process.env.GOOD_EYE_PARSE_TIMEOUT_MS) || 45000;
 
 /** A challenge is identified by plumbing that is *live in the document* — a loaded challenge
  * script, or the container it renders into. Deliberately not a substring scan of the serialized
@@ -52,6 +59,17 @@ export class CaptureError extends Error {
 
 const firstLine = (err: unknown) =>
   (err instanceof Error ? err.message : String(err)).split("\n")[0];
+
+/**
+ * Abort a routed request, but only when it really is the script we meant to drop.
+ *
+ * Routes match on URL alone, and a URL is not owned by one resource type: the same address can
+ * serve a script and an image or fetch that varies on Sec-Fetch-Dest, and could even be the
+ * document itself. Aborting all of them would strip healthy media from the very capture this
+ * recovery exists to rescue, or fail the navigation outright as "unreachable".
+ */
+const dropScript = (route: { request(): Request; abort(): Promise<void>; continue(): Promise<void> }) =>
+  route.request().resourceType() === "script" ? route.abort() : route.continue();
 
 /** How long to give an in-page probe before assuming the renderer can't answer. */
 const PROBE_TIMEOUT_MS = 5000;
@@ -148,7 +166,7 @@ export async function looksChallenged(page: Page): Promise<boolean> {
  */
 export async function gotoReady(page: Page, url: string, preBlock: string[] = []): Promise<string[]> {
   const blocked = new Set(preBlock);
-  for (const u of blocked) await page.route(u, (r) => r.abort());
+  for (const u of blocked) await page.route(u, dropScript);
 
   // Only scripts can withhold DOMContentLoaded while leaving the DOM parsed: a *sync* script stalls
   // the parser itself (readyState stays "loading", handled below), and non-script subresources
@@ -160,14 +178,18 @@ export async function gotoReady(page: Page, url: string, preBlock: string[] = []
   // *target* pending, so blocking only that does nothing — the reload re-requests the original and
   // follows the redirect again, since a route is matched when the request is issued and not
   // re-consulted for the hop. Blocking every URL in the chain stops it at the first link.
-  const pendingScripts = new Map<string, string[]>();
+  // Keyed by the Request object, not its URL: two concurrent requests can share a URL, and keying
+  // by string collapses them — the one that completes then deletes the entry belonging to the one
+  // still hanging, and recovery is skipped for a page it could have fixed. Playwright hands back
+  // the same Request instance on every event, so identity is the reliable key.
+  const pendingScripts = new Map<Request, string[]>();
   page.on("request", (r) => {
     if (r.resourceType() !== "script") return;
     const chain: string[] = [];
     for (let hop: Request | null = r; hop; hop = hop.redirectedFrom()) chain.push(hop.url());
-    pendingScripts.set(r.url(), chain);
+    pendingScripts.set(r, chain);
   });
-  const settle = (r: { url(): string }) => { pendingScripts.delete(r.url()); };
+  const settle = (r: Request) => { pendingScripts.delete(r); };
   page.on("requestfinished", settle);
   page.on("requestfailed", settle);
 
@@ -183,7 +205,7 @@ export async function gotoReady(page: Page, url: string, preBlock: string[] = []
 
   let ok = await reachedDom(domTimeoutMs());
   // A document still mid-parse has earned more patience than a stalled deferred script has.
-  if (!ok && (await stillParsing())) ok = await reachedDom(parseTimeoutMs() - domTimeoutMs());
+  if (!ok && (await stillParsing())) ok = await reachedDom(Math.max(0, parseTimeoutMs() - domTimeoutMs()));
 
   if (!ok) {
     // Name the gating script when we can, for the log line only. Note what counts as gating — a
@@ -238,7 +260,7 @@ export async function gotoReady(page: Page, url: string, preBlock: string[] = []
     );
     for (const u of stalled) {
       blocked.add(u);
-      await page.route(u, (r) => r.abort());
+      await page.route(u, dropScript);
     }
     // The reload gets the same scrutiny as the first navigation, rejections included: a raw
     // Playwright error escaping here would skip captureWeb's real-browser retry and land the user
@@ -442,6 +464,13 @@ async function runCapture(
     const ctx = await browser.newContext({ viewport: DESKTOP });
     const page = await ctx.newPage();
     const stalledScripts = await gotoReady(page, url);
+    // Recovery is not free, so say so on the entry rather than letting a page that lost a script
+    // read as a pristine capture. The requests dropped here had all gone quiet for the full
+    // budget, but "almost certainly dead" is still worth recording next to the screenshots.
+    const note = stalledScripts.length
+      ? `${entry.note ? `${entry.note} — ` : ""}captured after dropping ` +
+        `${stalledScripts.length} dead script request(s): ${stalledScripts.join(", ")}`
+      : entry.note;
     ensureDir(dir); // only after a successful load — hard failures create no entry
 
     let title = "";
@@ -485,12 +514,12 @@ async function runCapture(
       const meta = MetaSchema.parse({
         slug, source_type: "web", platform: "web", url, domain, title,
         category: "other", status, captured_at: new Date().toISOString(),
-        note: entry.note, tags: [], palette: [], typography: {}, components, screens: [],
+        note, tags: [], palette: [], typography: {}, components, screens: [],
       });
       writeMeta(meta);
       return slug;
     } catch (err) {
-      if (salvageOrCleanup(dir, { slug, url, domain, note: entry.note, title, components })) {
+      if (salvageOrCleanup(dir, { slug, url, domain, note, title, components })) {
         console.error(`good-eye: capture degraded for ${slug}, saved as partial: ${err instanceof Error ? err.message : err}`);
         return slug;
       }

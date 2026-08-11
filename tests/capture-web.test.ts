@@ -15,12 +15,26 @@ before(async () => {
   ({ base, close } = await startFixtureServer());
   // Every stall path below waits out these budgets; the real 15s/30s would dominate the suite.
   process.env.GOOD_EYE_DOM_TIMEOUT_MS = "2000";
+  process.env.GOOD_EYE_PARSE_TIMEOUT_MS = "4000";
   process.env.GOOD_EYE_NAV_TIMEOUT_MS = "3000";
 });
 after(() => {
   close();
   delete process.env.GOOD_EYE_DOM_TIMEOUT_MS;
+  delete process.env.GOOD_EYE_PARSE_TIMEOUT_MS;
   delete process.env.GOOD_EYE_NAV_TIMEOUT_MS;
+});
+
+test("the deferred-script budget is never shorter than the goto timeout it replaced", async () => {
+  // A guard on a number, because getting it wrong is silent. The old code allowed DOMContentLoaded
+  // a full 30s and then failed; if recovery can trigger sooner than that, a required bundle that
+  // merely downloads slowly gets aborted as dead and the page is reloaded without it — a page the
+  // previous version captured perfectly becomes a quietly unhydrated one.
+  const src = fs.readFileSync(new URL("../src/capture/web.ts", import.meta.url), "utf8");
+  const dom = Number(/GOOD_EYE_DOM_TIMEOUT_MS\) \|\| (\d+)/.exec(src)?.[1]);
+  const parse = Number(/GOOD_EYE_PARSE_TIMEOUT_MS\) \|\| (\d+)/.exec(src)?.[1]);
+  assert.ok(dom >= 30000, `deferred-script budget must not undercut the old 30s goto, got ${dom}`);
+  assert.ok(parse >= dom, `parse budget (${parse}) must not be shorter than the DOM budget (${dom})`);
 });
 
 test("captureWeb produces artifacts, tokens, and provisional meta", async () => {
@@ -115,6 +129,11 @@ test("a stalled <script defer> still captures clean (DOMContentLoaded never fire
   const meta = readMeta(slug);
   assert.equal(meta.status, "needs-analysis", "a blocked DOMContentLoaded must not degrade to partial");
   assert.ok(meta.title.includes("DeferCo"));
+  // Recovery is not free, and the entry has to say so — a page that lost a script must not read
+  // back as a pristine capture months later when someone is judging it as a design reference.
+  assert.match(meta.note, /dropping 1 dead script request/);
+  assert.match(meta.note, /hang\.js/);
+  assert.ok(meta.note.startsWith("defer —"), "the caller's own note must survive, not be replaced");
   const dir = designDir(slug);
   for (const f of ["desktop.png", "desktop-fold.png", "mobile.png", "page.html", "tokens.json"]) {
     assert.ok(fs.existsSync(path.join(dir, f)), `missing ${f}`);
@@ -254,6 +273,23 @@ test("gotoReady classifies each failure mode distinctly", async (t) => {
       assert.ok(blocked.length > 0, "must still recover when no DOM src matches the pending URL");
       assert.ok((await page.title()).includes("RedirectCo"));
       assert.equal(await page.evaluate(() => document.readyState), "complete");
+    });
+
+    await t.test("dropping a stalled script does not drop an image sharing its URL", async () => {
+      // Routes match on URL alone, but a URL is not owned by one resource type. This page requests
+      // /dual-use twice — as a script, where it hangs, and as an image, where it serves fine. Only
+      // the script may be aborted; taking the image too would strip content out of the capture
+      // recovery is meant to rescue.
+      const page = await open();
+      const blocked = await gotoReady(page, `${base}dual-use.html`);
+
+      assert.ok(blocked.includes(`${base}dual-use`), "the stalled script URL must be blocked");
+      const img = await page.evaluate(() => {
+        const el = document.getElementById("shared") as HTMLImageElement | null;
+        return { complete: el?.complete ?? false, width: el?.naturalWidth ?? 0 };
+      });
+      assert.equal(img.complete, true, "the image at the same URL must still load");
+      assert.ok(img.width > 0, "the image must have actually decoded, not just settled");
     });
 
     await t.test("blocked — 200, parses fine, but serves a challenge page", async () => {
