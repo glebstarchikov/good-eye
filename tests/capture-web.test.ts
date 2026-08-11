@@ -191,6 +191,23 @@ test("gotoReady classifies each failure mode distinctly", async (t) => {
       assert.ok((await page.title()).includes("SlowCo"));
     });
 
+    await t.test("an error response on the reload is caught, not captured as the site", async () => {
+      // The reload is a second chance to be lied to. A 429 error page parses cleanly and carries no
+      // challenge marker, so without checking its status it would sail through and get written up
+      // as a real library entry.
+      const page = await open();
+      await assert.rejects(
+        () => gotoReady(page, `${base}flaky-reload`),
+        (err: unknown) => {
+          assert.ok(err instanceof CaptureError);
+          assert.equal(err.kind, "http-error");
+          assert.match(err.message, /HTTP 429/);
+          assert.match(err.message, /on reload/);
+          return true;
+        }
+      );
+    });
+
     await t.test("blocked — 200, parses fine, but serves a challenge page", async () => {
       const page = await open();
       await assert.rejects(
@@ -220,9 +237,38 @@ test("gotoReady classifies each failure mode distinctly", async (t) => {
       const page = await open();
       assert.deepEqual(await gotoReady(page, `${base}index.html`), []);
     });
+
+    await t.test("a module script gates DOMContentLoaded even though .defer reads false", async () => {
+      // Modules are deferred by default and gate the event, yet HTMLScriptElement.defer reads false
+      // for them. The Cloudflare beacon behind this whole fix ships as type="module", so a
+      // `defer`-only filter would sail straight past the actual culprit and the page would still
+      // fail. This page also carries a dead `async` script, which must not be what we blame.
+      const page = await open();
+      const blocked = await gotoReady(page, `${base}module-hang.html`);
+
+      assert.ok(blocked.includes(`${base}hang.js`), "the gating module script must be identified");
+      assert.ok((await page.title()).includes("ModuleCo"));
+      // Reaching "complete" is the property that matters: page.screenshot() waits on
+      // document.fonts.ready, which Chrome withholds until the document finishes loading. Any
+      // request left hanging here would cost the capture entirely, not just that one script.
+      assert.equal(await page.evaluate(() => document.readyState), "complete");
+      await page.evaluate(() => document.fonts.ready); // hangs the test if the document is pinned
+    });
   } finally {
     await browser.close();
   }
+});
+
+test("a page whose dead scripts are module + async still captures end to end", async () => {
+  // The end-to-end guard for the above. Leaving any dead request in flight keeps the load event
+  // from firing, so document.fonts.ready never settles and every page.screenshot() burns its full
+  // 30s timeout — turning "one script missing" into "no capture at all".
+  tempDataDir();
+  const slug = await captureWeb(`${base}module-hang.html`, { note: "module" });
+  const meta = readMeta(slug);
+  assert.equal(meta.status, "needs-analysis");
+  assert.ok(fs.statSync(path.join(designDir(slug), "desktop.png")).size > 1000);
+  assert.ok(fs.existsSync(path.join(designDir(slug), "mobile.png")));
 });
 
 test("challenge detection does not fire on a page that merely talks like one", async () => {

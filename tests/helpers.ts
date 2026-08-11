@@ -44,6 +44,7 @@ export function seedEntry(meta: Meta, analysis?: string): void {
 export async function startFixtureServer(): Promise<{ base: string; close: () => void }> {
   const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "site");
   const sockets = new Set<import("node:net").Socket>();
+  let flakyReloadServed = 0;
   const server = http.createServer((req, res) => {
     // /hang holds the connection open forever, so a page fetching it never reaches
     // networkidle — mirrors analytics-heavy production sites (Stripe et al.).
@@ -54,12 +55,26 @@ export async function startFixtureServer(): Promise<{ base: string; close: () =>
     }
     // A script that never finishes loading. As a `defer` subresource this pins DOMContentLoaded
     // open forever — the production failure, reproduced without touching the network.
-    if (req.url === "/hang.js") {
+    if (req.url === "/hang.js" || req.url === "/hang-async.js") {
       res.writeHead(200, { "content-type": "application/javascript" });
       return; // headers only, body never ends
     }
     // How an edge WAF refuses an automated client: a hard 403 before any page is served.
     if (req.url === "/forbidden") { res.writeHead(403); return res.end("Forbidden"); }
+    // Serves the stalled-deferred-script page once, then rate-limits. Mirrors an origin that
+    // throttles the immediate reload: the 429 body parses fine and carries no challenge marker,
+    // so an unchecked reload response would capture the error page as though it were the site.
+    if (req.url === "/flaky-reload") {
+      if (flakyReloadServed++ === 0) {
+        res.writeHead(200, { "content-type": "text/html" });
+        return res.end(
+          '<!doctype html><html><head><title>FlakyCo</title>' +
+          '<script defer src="/hang.js"></script></head><body><h1>Flaky</h1></body></html>'
+        );
+      }
+      res.writeHead(429, { "content-type": "text/html" });
+      return res.end("<!doctype html><html><head><title>Too Many Requests</title></head><body>Slow down</body></html>");
+    }
     // A document that arrives slowly but does arrive — fourseasons.com takes 32s to reach
     // DOMContentLoaded. It must outlive the deferred-script budget without being called blocked.
     if (req.url === "/slow-parse") {

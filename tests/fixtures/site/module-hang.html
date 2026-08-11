@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>ModuleCo — the real-world shape of the bug</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- The actual culprit's shape. A module script is deferred by default, so it gates
+       DOMContentLoaded exactly like `defer` does — but HTMLScriptElement.defer reads false for it,
+       because that property reflects an attribute modules never set. The Cloudflare Insights
+       beacon that started all this ships as type="module", so a filter keying on `defer` alone
+       would skip the one script actually holding the event open. -->
+  <script type="module" src="/hang.js"></script>
+  <!-- An async script that also never loads. This one does NOT gate DOMContentLoaded, so it must
+       be left alone: aborting it would drop a live bundle from a page that was fine without it. -->
+  <script async src="/hang-async.js"></script>
+</head>
+<body>
+  <header><strong>ModuleCo</strong></header>
+  <nav><a href="#">Product</a> <a href="#">Pricing</a></nav>
+  <main>
+    <section class="hero"><h1>Modules gate the event too</h1><p>Even without a defer attribute.</p></section>
+    <section class="features"><h2>Features</h2><p>Feature one. Feature two.</p></section>
+    <section class="pricing"><h2>Pricing</h2><p>Free. Pro. Team.</p></section>
+  </main>
+  <footer><p>© ModuleCo</p></footer>
+</body>
+</html>
