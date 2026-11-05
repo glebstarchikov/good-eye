@@ -47,11 +47,25 @@ function applyLibrarian(meta: Meta, out: LibrarianOutput, dir: string): Meta {
   meta.palette = out.palette;
   meta.typography = out.typography;
 
+  // The prompt lists absolute paths so the librarian can Read them, and it echoes them back.
+  // Anything outside dir comes out as "../…" and matches nothing.
+  const rel = (file: string) => (path.isAbsolute(file) ? path.relative(dir, file) : file);
+
   if (meta.source_type === "web") {
+    const claimed = out.components.flatMap((item) => {
+      const existing = meta.components.find((c) => c.path === rel(item.file));
+      return existing ? [{ item, existing }] : []; // librarian referenced a file we never captured
+    });
+    // A crop the librarian left out is one it judged not worth keeping — unless it kept none, which
+    // more likely means it misread the paths, and pruning then would empty the entry. Pruned before
+    // the renames below, so a name freed here is never one a kept crop has just moved onto.
+    if (claimed.length) {
+      const kept = new Set(claimed.map((c) => c.existing));
+      for (const c of meta.components) if (!kept.has(c)) fs.rmSync(path.join(dir, c.path), { force: true });
+      meta.components = meta.components.filter((c) => kept.has(c));
+    }
     const used = new Set<string>();
-    for (const item of out.components) {
-      const existing = meta.components.find((c) => c.path === item.file);
-      if (!existing) continue; // librarian referenced a file we never captured
+    for (const { item, existing } of claimed) {
       let base = item.type;
       let n = 2;
       while (used.has(base)) base = `${item.type}-${n++}`;
@@ -64,7 +78,7 @@ function applyLibrarian(meta: Meta, out: LibrarianOutput, dir: string): Meta {
     }
   } else {
     for (const item of out.screens) {
-      const existing = meta.screens.find((s) => s.path === item.file);
+      const existing = meta.screens.find((s) => s.path === rel(item.file));
       if (!existing) continue;
       existing.name = item.name;
       existing.description = item.description;
