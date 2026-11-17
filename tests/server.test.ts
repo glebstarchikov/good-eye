@@ -51,6 +51,11 @@ before(async () => {
 });
 after(async () => { await client.close(); });
 
+test("reports the version in package.json", () => {
+  const { version } = JSON.parse(fs.readFileSync(path.join(repo, "package.json"), "utf8"));
+  assert.deepEqual(client.getServerVersion(), { name: "good-eye", version });
+});
+
 test("lists all seven tools", async () => {
   const { tools } = await client.listTools();
   const names = tools.map((t) => t.name).sort();

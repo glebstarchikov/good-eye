@@ -1,4 +1,5 @@
 import path from "node:path";
+import { createRequire } from "node:module";
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -16,7 +17,8 @@ type Block =
   | { type: "image"; data: string; mimeType: "image/jpeg" };
 type ToolResult = { content: Block[]; isError?: boolean };
 
-const server = new McpServer({ name: "good-eye", version: "0.1.0" });
+const { version } = createRequire(import.meta.url)("../package.json") as { version: string };
+const server = new McpServer({ name: "good-eye", version });
 
 function withDb<T>(fn: (db: ReturnType<typeof openDb>) => T): T {
   const db = openDb();
