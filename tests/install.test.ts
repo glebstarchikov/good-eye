@@ -10,7 +10,7 @@ const script = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", 
 
 test("install.sh --dry-run plans all five phases without executing", async () => {
   const { stdout } = await execFileAsync("bash", [script, "--dry-run"]);
-  assert.match(stdout, /DRY: .*ln -sfn .*skill .*skills\/good-eye/);
+  assert.match(stdout, /DRY: ln -sfn \S+\/skills\/good-eye \S+\/\.claude\/skills\/good-eye/);
   assert.match(stdout, /DRY: claude mcp add --scope user good-eye/);
   assert.match(stdout, /DRY: merge hook into .*settings\.json/);
   assert.match(stdout, /mcpServers/);        // Claude Desktop snippet
