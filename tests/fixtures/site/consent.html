@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>ConsentCo</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Shopify's privacy banner as banditrunning.com serves it: an alertdialog with nothing named
+       cookie or consent in its id or class, and "Manage preferences" as its first button. The
+       magenta is unique on the page, so a screenshot containing it still shows the banner. -->
+  <style>
+    #shopify-pc__banner { position: fixed; left: 25%; right: 25%; bottom: 0; padding: 32px; background: #ff00ff; }
+  </style>
+</head>
+<body>
+  <header><strong>ConsentCo</strong></header>
+  <main>
+    <section class="hero"><h1>Run further</h1></section>
+    <section class="features"><h2>Below the fold</h2></section>
+  </main>
+  <section id="shopify-pc__banner" class="shopify-pc__banner__dialog" role="alertdialog" aria-modal="false">
+    Cookie consent
+    <button onclick="window.prefs = 1">Manage preferences</button>
+    <button onclick="this.parentElement.remove()">Accept</button>
+    <button onclick="this.parentElement.remove()">Decline</button>
+  </section>
+</body>
+</html>

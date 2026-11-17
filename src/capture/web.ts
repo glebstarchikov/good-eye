@@ -291,20 +291,83 @@ const SECTION_SELECTOR = [
   "[class*=hero]", "[class*=pricing]", "[class*=testimonial]", "[class*=faq]",
 ].join(", ");
 
-const COOKIE_SELECTORS = [
-  "#onetrust-accept-btn-handler",
-  "[id*=cookie i] button",
-  "[class*=cookie i] button",
-  "[class*=consent i] button",
-];
+/** A consent button, matched on its whole accessible name. Not "the first button in anything named
+ * cookie": on openai.com that was "Manage Cookies", and its modal became the capture. Anchored,
+ * so an "Accept invitation" call to action never qualifies. English, Dutch and German, the languages
+ * these captures are actually served in. */
+const CONSENT_NAME = new RegExp(`^\\s*(${[
+  "accept", "accept all", "accept all cookies", "accept cookies", "allow all", "allow all cookies",
+  "allow cookies", "agree", "i agree", "i accept", "got it",
+  "accepteren", "alles accepteren", "alle cookies accepteren", "akkoord", "toestaan", "alles toestaan",
+  "akzeptieren", "alle akzeptieren", "alle cookies akzeptieren", "zustimmen", "alle zulassen", "einverstanden",
+].join("|")})[.!]?\\s*$`, "i");
 
-async function dismissCookieBanners(page: Page): Promise<void> {
-  for (const sel of COOKIE_SELECTORS) {
-    try {
-      const el = page.locator(sel).first();
-      if (await el.isVisible({ timeout: 300 })) await el.click({ timeout: 1000 });
-    } catch { /* best effort per spec §4 */ }
+/**
+ * Hide the dialogs still floating over the page, then any popup that dims it. Runs in the page, so
+ * no named inner functions (see autoScroll).
+ *
+ * A dialog only counts when it, or something it sits in, is position: fixed. An in-flow dialog is
+ * part of the page: component libraries demo theirs inline.
+ *
+ * Most popups carry no dialog role at all — the store geo prompts on satisfyrunning.com and
+ * tracksmith.com don't — so the second pass keys on what every modal does instead: it greys the
+ * page out. Whatever sits near the left edge is checked for a full-viewport, semi-transparent layer;
+ * finding one, the outermost fixed full-viewport layer around it goes, so the panel goes with its
+ * dimmer. A canvas, a video or a 3D viewer is opaque or clear, never tinted, so none qualifies. And
+ * the climb stops before anything holding the page itself (main, h1), so a frosted-glass app shell
+ * is never taken for a backdrop.
+ */
+function hideOverlays(): void {
+  const dialogs = document.querySelectorAll<HTMLElement>(
+    'dialog[open], [role="dialog"], [role="alertdialog"], [aria-modal="true"]'
+  );
+  for (const el of Array.from(dialogs)) {
+    if (!el.checkVisibility({ visibilityProperty: true })) continue;
+    let floating = false;
+    for (let a: Element | null = el; a && !floating; a = a.parentElement) {
+      floating = getComputedStyle(a).position === "fixed";
+    }
+    if (floating) el.style.setProperty("display", "none", "important");
   }
+
+  for (let i = 0; i < 5; i++) { // popups stack when two open at once
+    let dimmer: HTMLElement | null = null;
+    let a = document.elementFromPoint(innerWidth * 0.03, innerHeight / 2) as HTMLElement | null;
+    for (; a && a !== document.body && a !== document.documentElement && !dimmer; a = a.parentElement) {
+      const s = getComputedStyle(a);
+      const r = a.getBoundingClientRect();
+      // rgba(r, g, b, a) or the slash form, e.g. oklab(0 0 0 / 0.5) from Tailwind 4
+      const m = s.backgroundColor.match(/^rgba\(.*,\s*([\d.]+)\)$|\/\s*([\d.]+)(%?)\s*\)$/);
+      const alpha = (m ? parseFloat(m[1] ?? m[2]) / (m[3] ? 100 : 1) : 1) * parseFloat(s.opacity);
+      const tinted = (alpha > 0 && alpha < 1) || s.backdropFilter !== "none";
+      if (tinted && r.width >= innerWidth * 0.9 && r.height >= innerHeight * 0.9) dimmer = a;
+    }
+    let popup: HTMLElement | null = null;
+    for (a = dimmer; a && a !== document.body && !a.querySelector("main, h1"); a = a.parentElement) {
+      const r = a.getBoundingClientRect();
+      if (getComputedStyle(a).position === "fixed" && r.width >= innerWidth * 0.9 && r.height >= innerHeight * 0.9) popup = a;
+    }
+    if (!popup) break;
+    popup.style.setProperty("display", "none", "important");
+  }
+}
+
+/** Clear what floats over the page before it is photographed, in order of how much each step can be
+ * trusted: answer a consent banner the way a visitor would, press Escape for popups that listen for
+ * it, and only then hide whatever is still up. */
+export async function clearOverlays(page: Page): Promise<void> {
+  try {
+    const consent = page.getByRole("button", { name: CONSENT_NAME })
+      .or(page.locator("#onetrust-accept-btn-handler"))
+      .filter({ visible: true })
+      .first();
+    if (await consent.count()) {
+      await consent.click({ timeout: 1000 });
+      await page.waitForTimeout(500); // let the banner animate out
+    }
+  } catch { /* best effort per spec §4 */ }
+  await page.keyboard.press("Escape").catch(() => {});
+  await probe(page, hideOverlays, undefined);
 }
 
 async function autoScroll(page: Page): Promise<void> {
@@ -321,7 +384,9 @@ async function autoScroll(page: Page): Promise<void> {
         total += 600;
         if (total >= document.body.scrollHeight || total > 30000) {
           clearInterval(timer);
-          window.scrollTo(0, 0);
+          // instant: under scroll-behavior: smooth the trip back up takes seconds, and the fold
+          // screenshot catches it halfway (satisfyrunning.com)
+          window.scrollTo({ top: 0, behavior: "instant" });
           resolve();
         }
       }, 120);
@@ -480,8 +545,9 @@ async function runCapture(
       // below is what actually triggers lazy-load — so a timeout here is normal, NOT a
       // degrade. Partial is reserved for a genuinely missing artifact (e.g. the mobile pass).
       await page.waitForLoadState("networkidle", { timeout: 6000 }).catch(() => {});
-      await dismissCookieBanners(page);
+      await clearOverlays(page);
       await autoScroll(page);
+      await clearOverlays(page); // newsletter popups wait for a timer or a scroll depth
 
       await page.screenshot({ path: path.join(dir, "desktop-fold.png") }); // viewport = above the fold
       await page.screenshot({ path: path.join(dir, "desktop.png"), fullPage: true });
@@ -500,7 +566,9 @@ async function runCapture(
         // Same wait semantics, or a stalled script would force "partial" — and reusing what the
         // desktop pass already found spares this one the whole detection budget again.
         await gotoReady(mpage, url, stalledScripts);
+        await clearOverlays(mpage); // a fresh context, so the banner is back
         await autoScroll(mpage);
+        await clearOverlays(mpage);
         await mpage.screenshot({ path: path.join(dir, "mobile.png"), fullPage: true });
         await mctx.close();
       } catch { degrade(); }

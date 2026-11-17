@@ -2,11 +2,12 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { chromium, type Browser } from "playwright";
+import { chromium, type Browser, type Page } from "playwright";
+import sharp from "sharp";
 import { tempDataDir, startFixtureServer } from "./helpers.js";
 import { designDir } from "../src/lib/paths.js";
 import { readMeta } from "../src/lib/meta.js";
-import { captureWeb, salvageOrCleanup, gotoReady, looksChallenged, CaptureError } from "../src/capture/web.js";
+import { captureWeb, salvageOrCleanup, gotoReady, looksChallenged, clearOverlays, CaptureError } from "../src/capture/web.js";
 
 let base: string;
 let close: () => void;
@@ -387,4 +388,225 @@ test("a page that merely talks like a challenge captures normally, end to end", 
   tempDataDir();
   const slug = await captureWeb(`${base}patient.html`, { note: "negative case" });
   assert.equal(readMeta(slug).status, "needs-analysis");
+});
+
+test("clearOverlays", async (t) => {
+  const browser = await chromium.launch();
+  const open = async (html: string): Promise<Page> => {
+    const page = await (await browser.newContext({ viewport: { width: 1440, height: 900 } })).newPage();
+    await page.setContent(html);
+    return page;
+  };
+  const shown = (page: Page, sel: string) => page.locator(sel).isVisible();
+  try {
+    await t.test("accepts a consent banner by its button's name, never its settings button", async () => {
+      // The openai.com failure: clicking the *first* button in anything named cookie opened the
+      // preferences modal, and that modal became the capture. The hidden OneTrust button is a
+      // leftover a stale match would pick first and then time out on.
+      const page = await open(`
+        <body style="margin:0">
+        <div style="display:none"><button id="onetrust-accept-btn-handler">Accept All Cookies</button></div>
+        <main style="height:3000px"><h1>Hello</h1>
+          <button id="cta" onclick="window.ctaClicked = 1">Accept invitation</button>
+          <button onclick="window.ctaClicked = 1">Cards we accept</button></main>
+        <div id="cookie-banner" style="position:fixed;bottom:0;left:0;right:0;padding:24px;background:#eee">
+          We use cookies.
+          <button onclick="window.settings = 1">Cookie settings</button>
+          <button onclick="document.getElementById('cookie-banner').remove()">Accept all</button>
+        </div></body>`);
+      await clearOverlays(page);
+      assert.equal(await page.locator("#cookie-banner").count(), 0, "banner should be accepted away");
+      assert.equal(await page.evaluate(() => (window as any).settings), undefined, "settings must not be clicked");
+      assert.equal(await page.evaluate(() => (window as any).ctaClicked), undefined, "a CTA that merely says accept is not consent");
+    });
+
+    await t.test("closes a popup that listens for Escape", async () => {
+      const page = await open(`
+        <body><main style="height:3000px">Page</main>
+        <div id="promo" style="position:fixed;top:30%;left:30%;padding:40px;background:#fff">20% off today</div>
+        <script>addEventListener("keydown", (e) => { if (e.key === "Escape") document.getElementById("promo").remove(); });</script>
+        </body>`);
+      await clearOverlays(page);
+      assert.equal(await page.locator("#promo").count(), 0);
+    });
+
+    await t.test("hides modal dialogs and their backdrops", async () => {
+      // Both backdrop shapes in one page: a wrapper around the dialog, and a sibling layer (Radix).
+      const page = await open(`
+        <body style="margin:0">
+        <main style="height:3000px"><h1>Store</h1></main>
+        <div id="wrap" style="position:fixed;inset:0;background:rgba(0,0,0,.5)">
+          <div id="news" role="dialog" aria-modal="true" style="margin:20vh auto;width:400px;background:#fff">
+            Join our newsletter <input> <button>Subscribe</button></div></div>
+        <div id="veil" style="position:fixed;inset:0;background:rgba(0,0,0,.3)"></div>
+        <div id="geo" role="dialog" style="position:fixed;top:30%;left:30%;background:#fff">
+          Visiting from Netherlands? <button>Stay here</button></div>
+        </body>`);
+      await clearOverlays(page);
+      for (const sel of ["#news", "#geo", "#wrap", "#veil"]) assert.equal(await shown(page, sel), false, `${sel} still shown`);
+    });
+
+    await t.test("hides a popup with no dialog role by the page it dims", async () => {
+      // The two that survived the first version of this fix, measured live: satisfyrunning.com's
+      // "Change Country?" (the dimming span sits two fixed layers down) and tracksmith.com's
+      // "Visiting from Netherlands?" (an absolute dimming span). Neither has a role, neither
+      // listens for Escape, and neither has a close button with a name.
+      const satisfy = await open(`
+        <body style="margin:0"><main style="height:3000px"><h1>Store</h1></main>
+        <div id="country" style="position:fixed;inset:0;z-index:6666;display:flex;align-items:center;justify-content:center">
+          <button style="position:fixed;inset:0;background:transparent;border:0"><span style="position:fixed;inset:0;background:rgba(0,0,0,.6)"></span></button>
+          <div style="position:relative;z-index:10;background:#fff;padding:60px">Change Country?
+            <select><option>Netherlands (EUR)</option></select> <button>Save</button></div>
+        </div></body>`);
+      await clearOverlays(satisfy);
+      assert.equal(await shown(satisfy, "#country"), false);
+
+      const tracksmith = await open(`
+        <body style="margin:0"><main style="height:3000px"><h1>Store</h1></main>
+        <div id="prompt" style="position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:99999999">
+          <span style="position:absolute;inset:0;background:rgba(0,0,0,.5)"></span>
+          <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:10;background:#fff;padding:40px">
+            Visiting from Netherlands? <img alt="" width="80" height="80"></div>
+        </div></body>`);
+      await clearOverlays(tracksmith);
+      assert.equal(await shown(tracksmith, "#prompt"), false);
+
+      // The everyday Tailwind shape: the wrapper is the dimmer and holds the panel.
+      const tailwind = await open(`
+        <body style="margin:0"><main style="height:3000px"><h1>Store</h1></main>
+        <div id="modal" style="position:fixed;inset:0;background:rgba(0,0,0,.5);display:grid;place-items:center">
+          <div style="background:#fff;padding:40px">Get 10% off <input></div></div></body>`);
+      await clearOverlays(tailwind);
+      assert.equal(await shown(tailwind, "#modal"), false);
+
+      // A backdrop that only blurs, with no tint at all.
+      const frosted = await open(`
+        <body style="margin:0"><main style="height:3000px"><h1>Store</h1></main>
+        <div id="modal" style="position:fixed;inset:0;backdrop-filter:blur(8px);display:grid;place-items:center">
+          <div style="background:#fff;padding:40px">Join the club</div></div></body>`);
+      await clearOverlays(frosted);
+      assert.equal(await shown(frosted, "#modal"), false);
+    });
+
+    await t.test("never hides what tints the page by design", async () => {
+      // The commonest hero there is: a dark tint laid over the photo. It dims, it fills the screen,
+      // and it must stay — it sits in the page's flow, where no popup lives.
+      const hero = await open(`
+        <body style="margin:0"><section style="position:relative;height:100vh;background:#456">
+          <div id="tint" style="position:absolute;inset:0;background:rgba(0,0,0,.4)"></div>
+          <h1 style="position:relative;margin:0;padding-top:40vh;color:#fff">Run further</h1></section>
+        <main style="height:2000px">More</main></body>`);
+      await clearOverlays(hero);
+      assert.equal(await shown(hero, "#tint"), true);
+
+      // A frosted-glass app shell: translucent and fixed, but it holds the page itself.
+      const shell = await open(`
+        <body style="margin:0;background:#8ab">
+        <div id="shell" style="position:fixed;inset:0;overflow:auto;background:rgba(255,255,255,.7);backdrop-filter:blur(20px)">
+          <main><h1 style="margin-top:45vh">App</h1></main></div></body>`);
+      await clearOverlays(shell);
+      assert.equal(await shown(shell, "#shell"), true);
+
+      // A fixed portfolio wrapper with no main or h1, whose translucent sidebar is what sits at
+      // the edge: a sidebar is not a dimmer, however translucent.
+      const site = await open(`
+        <body style="margin:0;background:#8ab">
+        <div id="site" style="position:fixed;inset:0;overflow:auto">
+          <nav style="position:absolute;left:0;top:0;bottom:0;width:240px;background:rgba(255,255,255,.6)">Menu</nav>
+          <section style="margin-left:240px"><h2>Work</h2></section></div></body>`);
+      await clearOverlays(site);
+      assert.equal(await shown(site, "#site"), true);
+    });
+
+    await t.test("leaves page furniture alone", async () => {
+      const page = await open(`
+        <body style="margin:0">
+        <video id="bg" style="position:fixed;inset:0;width:100%;height:100%;z-index:-1;background:#123"></video>
+        <header id="hdr" style="position:sticky;top:0;height:60px;background:#111;color:#fff">Brand</header>
+        <main style="height:3000px">
+          <div id="demo" role="dialog" style="width:300px;padding:20px;border:1px solid">Dialog component demo</div></main>
+        <canvas id="gl" style="position:fixed;inset:0;width:100vw;height:100vh"></canvas>
+        <div id="wrap" style="position:fixed;inset:0;background:rgba(0,0,0,.5)">
+          <div id="pop" role="dialog" aria-modal="true" style="margin:20vh auto;width:400px;background:#fff">Sign up</div></div>
+        </body>`);
+      await clearOverlays(page);
+      assert.equal(await shown(page, "#pop"), false);
+      assert.equal(await shown(page, "#wrap"), false);
+      // A sticky header, a background video, an in-flow dialog demo and a full-screen WebGL
+      // canvas are the design, not overlays.
+      for (const sel of ["#hdr", "#bg", "#demo", "#gl"]) assert.equal(await shown(page, sel), true, `${sel} was hidden`);
+    });
+
+    await t.test("never takes a full-screen app shell or 3D viewer for a backdrop", async () => {
+      // A site whose whole content is a fixed, full-viewport scroller: hiding it blanks the page.
+      const shell = await open(`
+        <body style="margin:0">
+        <div id="shell" style="position:fixed;inset:0;overflow:auto"><h1 style="margin-top:45vh">App</h1></div>
+        <div id="veil" style="position:fixed;inset:0;background:rgba(0,0,0,.4)"></div>
+        <div id="pop" role="dialog" style="position:fixed;top:10px;left:10px;background:#fff">Hi</div>
+        </body>`);
+      await clearOverlays(shell);
+      assert.equal(await shown(shell, "#veil"), false);
+      assert.equal(await shown(shell, "#shell"), true);
+
+      // 3D viewers render into a shadow root, where their canvas looks empty to innerText and
+      // querySelector: one as a custom element (Spline, model-viewer), one as a plain host div.
+      const viewers = await open(`
+        <body style="margin:0"><main style="height:3000px">Page</main>
+        <x-scene id="scene" style="position:fixed;inset:0;display:block"></x-scene>
+        <div id="pop" role="dialog" style="position:fixed;top:10px;left:10px;background:#fff">Hi</div></body>`);
+      await clearOverlays(viewers);
+      assert.equal(await shown(viewers, "#pop"), false);
+      assert.equal(await shown(viewers, "#scene"), true);
+
+      const host = await open(`
+        <body style="margin:0"><main style="height:3000px">Page</main>
+        <div id="viewer" style="position:fixed;inset:0"></div>
+        <div id="pop" role="dialog" style="position:fixed;top:10px;left:10px;background:#fff">Hi</div>
+        <script>document.getElementById("viewer").attachShadow({ mode: "open" }).innerHTML =
+          '<canvas style="width:100vw;height:100vh"></canvas>';</script></body>`);
+      await clearOverlays(host);
+      assert.equal(await shown(host, "#pop"), false);
+      assert.equal(await shown(host, "#viewer"), true);
+
+      const video = await open(`
+        <body style="margin:0"><main style="height:3000px">Page</main>
+        <div id="hero" style="position:fixed;inset:0"><video muted style="width:100%;height:100%;background:#123"></video></div>
+        <div id="pop" role="dialog" style="position:fixed;top:10px;left:10px;background:#fff">Hi</div></body>`);
+      await clearOverlays(video);
+      assert.equal(await shown(video, "#pop"), false);
+      assert.equal(await shown(video, "#hero"), true);
+    });
+  } finally {
+    await browser.close();
+  }
+});
+
+/** Whether any pixel in the PNG is exactly this colour. */
+async function hasColor(file: string, [r, g, b]: [number, number, number]): Promise<boolean> {
+  const { data, info } = await sharp(file).raw().toBuffer({ resolveWithObject: true });
+  for (let i = 0; i < data.length; i += info.channels) {
+    if (data[i] === r && data[i + 1] === g && data[i + 2] === b) return true;
+  }
+  return false;
+}
+
+test("captureWeb clears a consent banner from the desktop and the mobile pass", async () => {
+  // The banditrunning.com shape: Shopify's own banner, which no cookie/consent selector matched,
+  // so it sat over the desktop fold and covered most of the mobile capture.
+  tempDataDir();
+  const slug = await captureWeb(`${base}consent.html`);
+  const dir = designDir(slug);
+  for (const f of ["desktop-fold.png", "desktop.png", "mobile.png"]) {
+    assert.equal(await hasColor(path.join(dir, f), [255, 0, 255]), false, `consent banner is in ${f}`);
+  }
+  assert.equal(readMeta(slug).status, "needs-analysis");
+});
+
+test("the fold is shot from the top even when the page scrolls smoothly", async () => {
+  tempDataDir();
+  const slug = await captureWeb(`${base}smooth.html`);
+  const { data } = await sharp(path.join(designDir(slug), "desktop-fold.png"))
+    .extract({ left: 5, top: 5, width: 1, height: 1 }).raw().toBuffer({ resolveWithObject: true });
+  assert.deepEqual([...data.subarray(0, 3)], [10, 37, 64], "the fold should open on the header (#0a2540)");
 });
