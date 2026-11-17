@@ -24,7 +24,7 @@ if [ "$DRY" = 0 ] && [ ! -f "$TSX" ]; then echo "ERROR: $TSX not found after npm
 
 # 2. Skill symlink
 run mkdir -p "$HOME/.claude/skills"
-run ln -sfn "$REPO/skill" "$HOME/.claude/skills/good-eye"
+run ln -sfn "$REPO/skills/good-eye" "$HOME/.claude/skills/good-eye"
 
 # 3. MCP server (user scope, absolute paths — GUI apps have a minimal PATH)
 if [ "$DRY" = 1 ]; then

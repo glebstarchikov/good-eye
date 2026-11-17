@@ -1,6 +1,10 @@
 node_modules/
+dist/
+coverage/
 data/
 .DS_Store
 .superpowers/
-
+.vscode/
+.idea/
+*.log
 .env*

@@ -42,7 +42,8 @@ style/theme decisions, design critique. Search FIRST, design SECOND.
 
 ## Fallback without MCP
 
-The library lives at `~/claude-has-a-good-eye`. CLI equivalent:
-`~/claude-has-a-good-eye/node_modules/.bin/tsx ~/claude-has-a-good-eye/src/cli.ts search <query> [--tag t] [--category c]`
-(also: `add <url>`, `tags`, `reindex`). Images are at
-`~/claude-has-a-good-eye/data/designs/<slug>/` — Read them directly.
+The catalog lives in `~/.good-eye/data` (override with `GOOD_EYE_DATA_DIR`). From a checkout of this repo:
+
+`node --import tsx src/cli.ts search <query> [--tag t] [--category c]`
+
+Also: `add <url>`, `capture <url>`, `analyze <slug>`, `tags`, `reindex`. Images are under `~/.good-eye/data/designs/<slug>/`. Read them directly.
