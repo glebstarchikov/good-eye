@@ -1,4 +1,5 @@
-import Database from "better-sqlite3";
+// Node's built-in SQLite: a native add-on would need an install-time build the plugin installer never runs.
+import { DatabaseSync } from "node:sqlite";
 import { dataDir, dbPath, ensureDir } from "./paths.js";
 import { listSlugs, readAnalysis, readMeta, type Meta } from "./meta.js";
 
@@ -19,16 +20,31 @@ CREATE VIRTUAL TABLE IF NOT EXISTS designs_fts USING fts5(
 );
 `;
 
-export function openDb(): Database.Database {
+export function openDb(): DatabaseSync {
   ensureDir(dataDir());
-  const db = new Database(dbPath());
-  db.pragma("journal_mode = WAL");
+  const db = new DatabaseSync(dbPath());
+  // Each Claude session runs its own server; wait for another's write lock (better-sqlite3's default) rather than fail.
+  db.exec("PRAGMA busy_timeout = 5000");
+  db.exec("PRAGMA journal_mode = WAL");
   db.exec(SCHEMA);
   return db;
 }
 
-export function upsertDesign(db: Database.Database, meta: Meta, analysis: string): void {
-  const tx = db.transaction(() => {
+/** Runs fn atomically. A savepoint rather than BEGIN, so it nests inside an outer transaction. */
+function transaction(db: DatabaseSync, fn: () => void): void {
+  db.exec("SAVEPOINT tx");
+  try {
+    fn();
+    db.exec("RELEASE tx");
+  } catch (err) {
+    db.exec("ROLLBACK TO tx");
+    db.exec("RELEASE tx");
+    throw err;
+  }
+}
+
+export function upsertDesign(db: DatabaseSync, meta: Meta, analysis: string): void {
+  transaction(db, () => {
     const existing = db.prepare("SELECT id FROM designs WHERE slug = ?").get(meta.slug) as { id: number } | undefined;
     if (existing) {
       for (const t of ["tags", "components", "colors"]) {
@@ -45,7 +61,7 @@ export function upsertDesign(db: Database.Database, meta: Meta, analysis: string
       source_type: meta.source_type, platform: meta.platform, category: meta.category,
       status: meta.status, captured_at: meta.captured_at, note: meta.note,
     });
-    const id = info.lastInsertRowid as number;
+    const id = Number(info.lastInsertRowid);
     const insTag = db.prepare("INSERT INTO tags (design_id, tag) VALUES (?, ?)");
     for (const tag of meta.tags) insTag.run(id, tag);
     const insComp = db.prepare("INSERT INTO components (design_id, type, path, description) VALUES (?, ?, ?, ?)");
@@ -62,16 +78,15 @@ export function upsertDesign(db: Database.Database, meta: Meta, analysis: string
        VALUES (?, ?, ?, ?, ?, ?, ?)`
     ).run(meta.slug, meta.title, meta.category, meta.tags.join(" "), meta.note, analysis, componentsText);
   });
-  tx();
 }
 
-export function reindexAll(db: Database.Database): number {
+export function reindexAll(db: DatabaseSync): number {
   const slugs = listSlugs();
   // One outer transaction: a corrupt meta.json must abort the rebuild, never leave a half-wiped catalog.
-  db.transaction(() => {
+  transaction(db, () => {
     db.exec("DELETE FROM tags; DELETE FROM components; DELETE FROM colors; DELETE FROM designs; DELETE FROM designs_fts;");
     for (const slug of slugs) upsertDesign(db, readMeta(slug), readAnalysis(slug));
-  })();
+  });
   return slugs.length;
 }
 
@@ -97,7 +112,7 @@ function ftsQuery(q: string): string | null {
   return tokens.length ? tokens.map((t) => `"${t}"`).join(" OR ") : null;
 }
 
-export function searchDesigns(db: Database.Database, args: SearchArgs): SearchHit[] {
+export function searchDesigns(db: DatabaseSync, args: SearchArgs): SearchHit[] {
   const limit = args.limit ?? 5;
   let ordered: { slug: string; snippet: string }[];
   const match = args.query ? ftsQuery(args.query) : null;
@@ -116,7 +131,7 @@ export function searchDesigns(db: Database.Database, args: SearchArgs): SearchHi
   for (const { slug, snippet } of ordered) {
     const row = rowStmt.get(slug) as Record<string, unknown> | undefined;
     if (!row) continue;
-    const tags = (tagStmt.all(row.id) as { tag: string }[]).map((t) => t.tag);
+    const tags = (tagStmt.all(row.id as number) as { tag: string }[]).map((t) => t.tag);
     if (args.category && row.category !== args.category) continue;
     if (args.source_type && row.source_type !== args.source_type) continue;
     if (args.tags && !args.tags.every((t) => tags.includes(t))) continue;
@@ -131,7 +146,7 @@ export function searchDesigns(db: Database.Database, args: SearchArgs): SearchHi
   return hits;
 }
 
-export function listTagCounts(db: Database.Database): { tag: string; count: number }[] {
+export function listTagCounts(db: DatabaseSync): { tag: string; count: number }[] {
   return db.prepare("SELECT tag, COUNT(*) AS count FROM tags GROUP BY tag ORDER BY count DESC, tag").all() as {
     tag: string; count: number;
   }[];

@@ -2,8 +2,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { once } from "node:events";
+import { Worker } from "node:worker_threads";
 import { tempDataDir, fixtureMeta, seedEntry } from "./helpers.js";
-import { designDir } from "../src/lib/paths.js";
+import { dbPath, designDir } from "../src/lib/paths.js";
 import { openDb, upsertDesign, searchDesigns, reindexAll, listTagCounts } from "../src/lib/db.js";
 
 function seedThree() {
@@ -110,6 +112,30 @@ test("reindexAll is atomic: a corrupt meta.json aborts the rebuild without wipin
   // The catalog must still hold both entries from the first successful reindex.
   const slugs = searchDesigns(db, {}).map((h) => h.slug).sort();
   assert.deepEqual(slugs, [b.slug, a.slug].sort());
+});
+
+test("a write waits out another connection's lock instead of failing with 'database is locked'", async () => {
+  tempDataDir();
+  openDb().close();
+  // Stands in for a second Claude session's server, holding the write lock for a moment.
+  const holder = new Worker(`
+    const { DatabaseSync } = require("node:sqlite");
+    const { parentPort, workerData } = require("node:worker_threads");
+    const db = new DatabaseSync(workerData);
+    db.exec("BEGIN IMMEDIATE");
+    parentPort.postMessage("locked");
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
+    db.exec("COMMIT");
+    db.close();
+  `, { eval: true, workerData: dbPath() });
+  await once(holder, "message");
+
+  const db = openDb();
+  seedEntry(fixtureMeta(), "Indexed while the other connection held the lock.");
+  assert.equal(reindexAll(db), 1);
+  assert.equal(searchDesigns(db, {}).length, 1);
+  db.close();
+  await once(holder, "exit");
 });
 
 test("listTagCounts aggregates", () => {
