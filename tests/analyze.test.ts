@@ -228,3 +228,98 @@ test("re-analysis: a kept crop renamed onto a dropped crop's name survives the p
   assert.deepEqual(meta.components, [{ type: "hero", path: "components/hero.png", description: "new hero" }]);
   assert.equal(fs.readFileSync(path.join(dir, "components", "hero.png"), "utf8"), "png1");
 });
+
+/** An entry a previous analysis already named: each crop at its typed path, holding `content`. */
+function seedAnalyzed(crops: { path: string; type: string; content: string }[]) {
+  const seeded = seedCaptured();
+  const dir = designDir(seeded.slug);
+  for (const f of ["section-0.png", "section-1.png"]) fs.rmSync(path.join(dir, "components", f));
+  for (const c of crops) fs.writeFileSync(path.join(dir, c.path), c.content);
+  seedEntry(fixtureMeta({
+    ...readMeta(seeded.slug), status: "complete",
+    components: crops.map((c) => ({ type: c.type, path: c.path, description: `old ${c.type}` })),
+  }));
+  return { slug: seeded.slug, dir };
+}
+
+/** Every file in the entry's components folder, by path, with its content. */
+function cropFiles(dir: string): Record<string, string> {
+  return Object.fromEntries(fs.readdirSync(path.join(dir, "components")).sort()
+    .map((f) => [`components/${f}`, fs.readFileSync(path.join(dir, "components", f), "utf8")]));
+}
+
+test("re-analysis: two crops that swap labels both survive, each with its new label", async () => {
+  tempDataDir();
+  const { slug, dir } = seedAnalyzed([
+    { path: "components/hero.png", type: "hero", content: "was-hero" },
+    { path: "components/pricing.png", type: "pricing", content: "was-pricing" },
+  ]);
+  librarianSays({ components: [
+    { file: "components/pricing.png", type: "hero", description: "the old pricing crop is the hero" },
+    { file: "components/hero.png", type: "pricing", description: "the old hero crop is pricing" },
+  ] });
+  await analyze(slug);
+
+  assert.deepEqual(readMeta(slug).components, [
+    { type: "pricing", path: "components/pricing.png", description: "the old hero crop is pricing" },
+    { type: "hero", path: "components/hero.png", description: "the old pricing crop is the hero" },
+  ]);
+  assert.deepEqual(cropFiles(dir), { "components/hero.png": "was-pricing", "components/pricing.png": "was-hero" });
+});
+
+test("re-analysis: two crops of one type listed in the other order both survive", async () => {
+  tempDataDir();
+  const { slug, dir } = seedAnalyzed([
+    { path: "components/hero.png", type: "hero", content: "first-hero" },
+    { path: "components/hero-2.png", type: "hero", content: "second-hero" },
+  ]);
+  librarianSays({ components: [
+    { file: "components/hero-2.png", type: "hero", description: "now the main hero" },
+    { file: "components/hero.png", type: "hero", description: "now the alternate hero" },
+  ] });
+  await analyze(slug);
+
+  assert.deepEqual(readMeta(slug).components, [
+    { type: "hero", path: "components/hero-2.png", description: "now the alternate hero" },
+    { type: "hero", path: "components/hero.png", description: "now the main hero" },
+  ]);
+  assert.deepEqual(cropFiles(dir), { "components/hero-2.png": "first-hero", "components/hero.png": "second-hero" });
+});
+
+test("re-analysis: a crop the librarian lists twice keeps its first label and its file", async () => {
+  tempDataDir();
+  const { slug, dir } = seedAnalyzed([
+    { path: "components/hero.png", type: "hero", content: "the-crop" },
+    { path: "components/cta.png", type: "cta", content: "dropped" },
+  ]);
+  librarianSays({ components: [
+    { file: "components/hero.png", type: "features", description: "first claim" },
+    { file: "components/hero.png", type: "pricing", description: "second claim" },
+  ] });
+  await analyze(slug);
+
+  assert.equal(readMeta(slug).status, "complete");
+  assert.deepEqual(readMeta(slug).components, [
+    { type: "features", path: "components/features.png", description: "first claim" },
+  ]);
+  assert.deepEqual(cropFiles(dir), { "components/features.png": "the-crop" });
+});
+
+test("re-analysis that keeps every label leaves each crop where it was, and no staging folder behind", async () => {
+  tempDataDir();
+  const { slug, dir } = seedAnalyzed([
+    { path: "components/hero.png", type: "hero", content: "h" },
+    { path: "components/pricing.png", type: "pricing", content: "p" },
+  ]);
+  librarianSays({ components: [
+    { file: "components/hero.png", type: "hero", description: "same hero" },
+    { file: "components/pricing.png", type: "pricing", description: "same pricing" },
+  ] });
+  await analyze(slug);
+
+  assert.deepEqual(readMeta(slug).components.map((c) => [c.path, c.description]), [
+    ["components/hero.png", "same hero"], ["components/pricing.png", "same pricing"],
+  ]);
+  assert.deepEqual(cropFiles(dir), { "components/hero.png": "h", "components/pricing.png": "p" });
+  assert.deepEqual(fs.readdirSync(dir).filter((f) => f.startsWith(".relabel-")), []);
+});

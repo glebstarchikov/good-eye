@@ -55,7 +55,7 @@ function applyLibrarian(meta: Meta, out: LibrarianOutput, dir: string): Meta {
     const claimed = out.components.flatMap((item) => {
       const existing = meta.components.find((c) => c.path === rel(item.file));
       return existing ? [{ item, existing }] : []; // librarian referenced a file we never captured
-    });
+    }).filter((c, i, all) => all.findIndex((d) => d.existing === c.existing) === i); // listed twice: first label wins
     // A crop the librarian left out is one it judged not worth keeping — unless it kept none, which
     // more likely means it misread the paths, and pruning then would empty the entry. Pruned before
     // the renames below, so a name freed here is never one a kept crop has just moved onto.
@@ -64,18 +64,23 @@ function applyLibrarian(meta: Meta, out: LibrarianOutput, dir: string): Meta {
       for (const c of meta.components) if (!kept.has(c)) fs.rmSync(path.join(dir, c.path), { force: true });
       meta.components = meta.components.filter((c) => kept.has(c));
     }
+    // Re-analysis can swap or reorder labels, so a crop's new name may belong to one that hasn't
+    // moved yet. Every kept crop leaves for a fresh staging folder first, so no rename lands on another.
+    const stage = fs.mkdtempSync(path.join(dir, ".relabel-"));
+    claimed.forEach(({ existing }, i) => fs.renameSync(path.join(dir, existing.path), path.join(stage, `${i}.png`)));
     const used = new Set<string>();
-    for (const { item, existing } of claimed) {
+    claimed.forEach(({ item, existing }, i) => {
       let base = item.type;
       let n = 2;
       while (used.has(base)) base = `${item.type}-${n++}`;
       used.add(base);
       const newRel = path.join("components", `${base}.png`);
-      fs.renameSync(path.join(dir, existing.path), path.join(dir, newRel));
+      fs.renameSync(path.join(stage, `${i}.png`), path.join(dir, newRel));
       existing.path = newRel;
       existing.type = item.type;
       existing.description = item.description;
-    }
+    });
+    fs.rmdirSync(stage); // empty by now; refuses rather than deleting a crop if not
   } else {
     for (const item of out.screens) {
       const existing = meta.screens.find((s) => s.path === rel(item.file));
