@@ -1,0 +1,13 @@
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    # Security fixes only. Routine version bumps stay off.
+    open-pull-requests-limit: 0
+    groups:
+      # One pull request for all security fixes, not one per package.
+      security:
+        applies-to: security-updates
+        patterns: ["*"]

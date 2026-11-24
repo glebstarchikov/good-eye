@@ -29,7 +29,7 @@ export const MetaSchema = z.object({
   note: z.string().default(""),
   tags: z.array(z.string()).default([]),
   palette: z.array(PaletteEntry).default([]),
-  typography: Typography.default({}),
+  typography: Typography.prefault({}),
   components: z.array(z.object({ type: z.string(), path: z.string(), description: z.string() })).default([]),
   screens: z.array(z.object({ name: z.string(), path: z.string(), description: z.string() })).default([]),
 });
