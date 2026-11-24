@@ -2,6 +2,8 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { tempDataDir, startFixtureServer } from "./helpers.js";
@@ -14,10 +16,10 @@ const fakeClaude = path.join(here, "fixtures", "librarian", "fake-claude.sh");
 let base: string;
 let close: () => void;
 
-function cli(args: string[], dataDir: string) {
+function cli(args: string[], dataDir: string, env: Record<string, string> = {}) {
   return execFileAsync("node", ["--import", "tsx", path.join(repo, "src", "cli.ts"), ...args], {
     cwd: repo,
-    env: { ...process.env, GOOD_EYE_DATA_DIR: dataDir, GOOD_EYE_CLAUDE_BIN: fakeClaude },
+    env: { ...process.env, GOOD_EYE_DATA_DIR: dataDir, GOOD_EYE_CLAUDE_BIN: fakeClaude, ...env },
   });
 }
 
@@ -34,6 +36,18 @@ test("add -> search round trip through the real CLI", async () => {
 
   const reindexed = await cli(["reindex"], dataDir);
   assert.match(reindexed.stdout, /reindexed 1 entries/);
+});
+
+test("with no Chromium installed, add names the exact command that installs this Playwright's build", async () => {
+  const dataDir = tempDataDir();
+  // An empty browsers folder is a fresh machine, or one whose cache macOS purged: the plugin
+  // installer never downloads a browser.
+  const noBrowsers = fs.mkdtempSync(path.join(os.tmpdir(), "no-browsers-"));
+  const failed = await cli(["add", base], dataDir, { PLAYWRIGHT_BROWSERS_PATH: noBrowsers })
+    .then(() => assert.fail("add should exit 1"), (err) => err);
+  assert.equal(failed.code, 1);
+  const cliJs = path.join(repo, "node_modules", "playwright", "cli.js");
+  assert.ok(failed.stdout.includes(`Chromium for captures isn't installed. Run: node "${cliJs}" install chromium`), failed.stdout);
 });
 
 test("batch add isolates per-URL failures: continues past a bad URL, exits 1", async () => {

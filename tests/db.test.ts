@@ -114,10 +114,8 @@ test("reindexAll is atomic: a corrupt meta.json aborts the rebuild without wipin
   assert.deepEqual(slugs, [b.slug, a.slug].sort());
 });
 
-test("a write waits out another connection's lock instead of failing with 'database is locked'", async () => {
-  tempDataDir();
-  openDb().close();
-  // Stands in for a second Claude session's server, holding the write lock for a moment.
+/** Stands in for a second Claude session's server, holding the catalog's write lock for 300 ms. */
+async function holdWriteLock(): Promise<Worker> {
   const holder = new Worker(`
     const { DatabaseSync } = require("node:sqlite");
     const { parentPort, workerData } = require("node:worker_threads");
@@ -129,10 +127,29 @@ test("a write waits out another connection's lock instead of failing with 'datab
     db.close();
   `, { eval: true, workerData: dbPath() });
   await once(holder, "message");
+  return holder;
+}
+
+test("a write waits out another connection's lock instead of failing with 'database is locked'", async () => {
+  tempDataDir();
+  openDb().close();
+  const holder = await holdWriteLock();
 
   const db = openDb();
   seedEntry(fixtureMeta(), "Indexed while the other connection held the lock.");
   assert.equal(reindexAll(db), 1);
+  assert.equal(searchDesigns(db, {}).length, 1);
+  db.close();
+  await once(holder, "exit");
+});
+
+test("indexing one entry also waits out another connection's lock, though it reads before it writes", async () => {
+  tempDataDir();
+  openDb().close();
+  const holder = await holdWriteLock();
+
+  const db = openDb();
+  upsertDesign(db, fixtureMeta(), "Indexed while the other connection held the lock.");
   assert.equal(searchDesigns(db, {}).length, 1);
   db.close();
   await once(holder, "exit");

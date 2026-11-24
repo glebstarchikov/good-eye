@@ -208,6 +208,47 @@ test("a librarian path outside the entry matches nothing, so nothing moves or is
   assert.ok(fs.existsSync(path.join(dir, "components", "section-1.png")));
 });
 
+test("a crop type that climbs out of the entry is filed as other, and another entry's file is untouched", async () => {
+  tempDataDir();
+  const seeded = seedCaptured();
+  const dir = designDir(seeded.slug);
+  const sibling = designDir("other-com--2026-01-01");
+  fs.mkdirSync(sibling, { recursive: true });
+  fs.writeFileSync(path.join(sibling, "desktop.png"), "theirs");
+  librarianSays({ components: [
+    { file: "components/section-0.png", type: "../../other-com--2026-01-01/desktop", description: "planted" },
+    { file: "components/section-1.png", type: "hero", description: "the hero" },
+  ] });
+  await analyze(seeded.slug);
+
+  assert.equal(fs.readFileSync(path.join(sibling, "desktop.png"), "utf8"), "theirs");
+  assert.deepEqual(readMeta(seeded.slug).components, [
+    { type: "other", path: "components/other.png", description: "planted" },
+    { type: "hero", path: "components/hero.png", description: "the hero" },
+  ]);
+  assert.deepEqual(cropFiles(dir), { "components/hero.png": "png1", "components/other.png": "png0" });
+});
+
+test("crop types outside the vocabulary, including ones that are not file names, are filed as other", async () => {
+  tempDataDir();
+  const seeded = seedCaptured();
+  const dir = designDir(seeded.slug);
+  librarianSays({ components: [
+    { file: "components/section-0.png", type: "hero/variant", description: "a slash" },
+    { file: "components/section-1.png", type: "logo-cloud", description: "not in the list" },
+  ] });
+  await analyze(seeded.slug);
+
+  const meta = readMeta(seeded.slug);
+  assert.equal(meta.status, "complete");
+  assert.deepEqual(meta.components, [
+    { type: "other", path: "components/other.png", description: "a slash" },
+    { type: "other", path: "components/other-2.png", description: "not in the list" },
+  ]);
+  assert.deepEqual(cropFiles(dir), { "components/other-2.png": "png1", "components/other.png": "png0" });
+  assert.deepEqual(fs.readdirSync(dir).filter((f) => f.startsWith(".relabel-")), []);
+});
+
 test("re-analysis: a kept crop renamed onto a dropped crop's name survives the prune", async () => {
   tempDataDir();
   const seeded = seedCaptured();

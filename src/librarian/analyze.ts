@@ -7,7 +7,7 @@ import {
   LibrarianOutputSchema, readAnalysis, readMeta, writeAnalysis, writeMeta,
   type LibrarianOutput, type Meta,
 } from "../lib/meta.js";
-import { STYLE_TAGS } from "../lib/vocab.js";
+import { COMPONENT_TYPES, STYLE_TAGS } from "../lib/vocab.js";
 import { openDb, upsertDesign } from "../lib/db.js";
 import { buildPrompt } from "./prompt.js";
 
@@ -70,14 +70,16 @@ function applyLibrarian(meta: Meta, out: LibrarianOutput, dir: string): Meta {
     claimed.forEach(({ existing }, i) => fs.renameSync(path.join(dir, existing.path), path.join(stage, `${i}.png`)));
     const used = new Set<string>();
     claimed.forEach(({ item, existing }, i) => {
-      let base = item.type;
+      // The type names the file, and a page the librarian read could plant one like "../../x".
+      const type = (COMPONENT_TYPES as readonly string[]).includes(item.type) ? item.type : "other";
+      let base = type;
       let n = 2;
-      while (used.has(base)) base = `${item.type}-${n++}`;
+      while (used.has(base)) base = `${type}-${n++}`;
       used.add(base);
       const newRel = path.join("components", `${base}.png`);
       fs.renameSync(path.join(stage, `${i}.png`), path.join(dir, newRel));
       existing.path = newRel;
-      existing.type = item.type;
+      existing.type = type;
       existing.description = item.description;
     });
     fs.rmdirSync(stage); // empty by now; refuses rather than deleting a crop if not

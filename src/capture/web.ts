@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { chromium, type Page, type Request, type Response } from "playwright";
 import { Vibrant } from "node-vibrant/node";
 import { designDir, ensureDir, makeSlug } from "../lib/paths.js";
@@ -516,13 +517,22 @@ export async function captureWeb(url: string, opts: { note?: string; force?: boo
  * with a clear launch error if Chrome isn't installed, which captureWeb folds into its message. */
 const REAL_BROWSER = { channel: "chrome", headless: false } as const;
 
+const PLAYWRIGHT_CLI = path.join(path.dirname(createRequire(import.meta.url).resolve("playwright/package.json")), "cli.js");
+
 async function runCapture(
   url: string,
   entry: { slug: string; dir: string; domain: string; note: string },
   launchOpts: Parameters<typeof chromium.launch>[0]
 ): Promise<string> {
   const { slug, dir, domain } = entry;
-  const browser = await chromium.launch(launchOpts);
+  const browser = await chromium.launch(launchOpts).catch((err: unknown) => {
+    // Playwright says "npx playwright install", which run from another folder can fetch a build this
+    // copy can't use. The plugin installer downloads no browser, and macOS can purge the cache.
+    if (String(err).includes("Executable doesn't exist")) {
+      throw new Error(`Chromium for captures isn't installed. Run: node "${PLAYWRIGHT_CLI}" install chromium, then add the design again.`);
+    }
+    throw err;
+  });
   let status: Meta["status"] = "needs-analysis";
   const degrade = () => { status = "partial"; };
   try {
