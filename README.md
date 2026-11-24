@@ -9,19 +9,20 @@ TypeScript, Node.js, the Model Context Protocol SDK, SQLite (FTS5), Playwright, 
 
 ## Getting started
 ```sh
-bash scripts/install.sh
+claude plugin marketplace add glebstarchikov/claude-plugins
+claude plugin install good-eye@glebstarchikov
 ```
 
-This registers the MCP server (user scope), symlinks the skill to `~/.claude/skills/good-eye`, adds the design-prompt hook, and prints config snippets for Claude Desktop and Codex.
+This installs the MCP server and the skill as a Claude Code plugin. There is no hook. For Claude Desktop and Codex, `bash scripts/install.sh --dry-run` prints config snippets.
 
 Add a design: tell Claude "add https://stripe.com to the design library, look at their pricing" (or run `node --import tsx src/cli.ts add <url> --note "..."` from the repo). You can also paste an App Store or Play Store link, or ingest a folder of screenshots.
 
-Search happens automatically when you ask Claude to design something. To search manually: `node --import tsx src/cli.ts search dark pricing --tag dark-mode`.
+Search happens when design-factory's references step asks for it, or when you ask Claude to look something up. To search manually: `node --import tsx src/cli.ts search dark pricing --tag dark-mode`.
 
 Layout:
-- `data/designs/<slug>/` holds `meta.json`, `analysis.md`, screenshots, and tokens (the source of truth, gitignored)
-- `data/catalog.db` is a derived SQLite/FTS5 index (`cli.ts reindex` rebuilds it)
-- `src/` holds the capture pipeline, librarian, CLI, and MCP server; `skill/`, `hooks/`, `scripts/` hold the rest
+- `~/.good-eye/data/designs/<slug>/` (or `$GOOD_EYE_DATA_DIR`) holds `meta.json`, `analysis.md`, screenshots, and tokens (the source of truth, outside the repo)
+- `~/.good-eye/data/catalog.db` is a derived SQLite/FTS5 index (`cli.ts reindex` rebuilds it)
+- `src/` holds the capture pipeline, librarian, CLI, and MCP server; `skills/` and `scripts/` hold the rest
 
 ## License
 MIT
