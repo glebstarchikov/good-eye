@@ -30,54 +30,56 @@ export function openDb(): DatabaseSync {
   return db;
 }
 
-/** Runs fn atomically. A savepoint rather than BEGIN, so it nests inside an outer transaction. */
+/** Runs fn atomically. IMMEDIATE takes the write lock up front, so busy_timeout can wait out another
+ *  writer; a transaction that reads first gets "database is locked" at once when it starts writing. */
 function transaction(db: DatabaseSync, fn: () => void): void {
-  db.exec("SAVEPOINT tx");
+  db.exec("BEGIN IMMEDIATE");
   try {
     fn();
-    db.exec("RELEASE tx");
+    db.exec("COMMIT");
   } catch (err) {
-    db.exec("ROLLBACK TO tx");
-    db.exec("RELEASE tx");
+    db.exec("ROLLBACK");
     throw err;
   }
 }
 
 export function upsertDesign(db: DatabaseSync, meta: Meta, analysis: string): void {
-  transaction(db, () => {
-    const existing = db.prepare("SELECT id FROM designs WHERE slug = ?").get(meta.slug) as { id: number } | undefined;
-    if (existing) {
-      for (const t of ["tags", "components", "colors"]) {
-        db.prepare(`DELETE FROM ${t} WHERE design_id = ?`).run(existing.id);
-      }
-      db.prepare("DELETE FROM designs WHERE id = ?").run(existing.id);
-      db.prepare("DELETE FROM designs_fts WHERE slug = ?").run(meta.slug);
+  transaction(db, () => writeDesign(db, meta, analysis));
+}
+
+function writeDesign(db: DatabaseSync, meta: Meta, analysis: string): void {
+  const existing = db.prepare("SELECT id FROM designs WHERE slug = ?").get(meta.slug) as { id: number } | undefined;
+  if (existing) {
+    for (const t of ["tags", "components", "colors"]) {
+      db.prepare(`DELETE FROM ${t} WHERE design_id = ?`).run(existing.id);
     }
-    const info = db.prepare(
-      `INSERT INTO designs (slug, url, domain, title, source_type, platform, category, status, captured_at, note)
-       VALUES (@slug, @url, @domain, @title, @source_type, @platform, @category, @status, @captured_at, @note)`
-    ).run({
-      slug: meta.slug, url: meta.url, domain: meta.domain, title: meta.title,
-      source_type: meta.source_type, platform: meta.platform, category: meta.category,
-      status: meta.status, captured_at: meta.captured_at, note: meta.note,
-    });
-    const id = Number(info.lastInsertRowid);
-    const insTag = db.prepare("INSERT INTO tags (design_id, tag) VALUES (?, ?)");
-    for (const tag of meta.tags) insTag.run(id, tag);
-    const insComp = db.prepare("INSERT INTO components (design_id, type, path, description) VALUES (?, ?, ?, ?)");
-    for (const c of meta.components) insComp.run(id, c.type, c.path, c.description);
-    for (const s of meta.screens) insComp.run(id, `screen:${s.name}`, s.path, s.description);
-    const insColor = db.prepare("INSERT INTO colors (design_id, hex, role, prominence) VALUES (?, ?, ?, ?)");
-    for (const p of meta.palette) insColor.run(id, p.hex, p.role, p.prominence);
-    const componentsText = [
-      ...meta.components.map((c) => `${c.type}: ${c.description}`),
-      ...meta.screens.map((s) => `${s.name}: ${s.description}`),
-    ].join("\n");
-    db.prepare(
-      `INSERT INTO designs_fts (slug, title, category, tags, note, analysis, components_text)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
-    ).run(meta.slug, meta.title, meta.category, meta.tags.join(" "), meta.note, analysis, componentsText);
+    db.prepare("DELETE FROM designs WHERE id = ?").run(existing.id);
+    db.prepare("DELETE FROM designs_fts WHERE slug = ?").run(meta.slug);
+  }
+  const info = db.prepare(
+    `INSERT INTO designs (slug, url, domain, title, source_type, platform, category, status, captured_at, note)
+     VALUES (@slug, @url, @domain, @title, @source_type, @platform, @category, @status, @captured_at, @note)`
+  ).run({
+    slug: meta.slug, url: meta.url, domain: meta.domain, title: meta.title,
+    source_type: meta.source_type, platform: meta.platform, category: meta.category,
+    status: meta.status, captured_at: meta.captured_at, note: meta.note,
   });
+  const id = Number(info.lastInsertRowid);
+  const insTag = db.prepare("INSERT INTO tags (design_id, tag) VALUES (?, ?)");
+  for (const tag of meta.tags) insTag.run(id, tag);
+  const insComp = db.prepare("INSERT INTO components (design_id, type, path, description) VALUES (?, ?, ?, ?)");
+  for (const c of meta.components) insComp.run(id, c.type, c.path, c.description);
+  for (const s of meta.screens) insComp.run(id, `screen:${s.name}`, s.path, s.description);
+  const insColor = db.prepare("INSERT INTO colors (design_id, hex, role, prominence) VALUES (?, ?, ?, ?)");
+  for (const p of meta.palette) insColor.run(id, p.hex, p.role, p.prominence);
+  const componentsText = [
+    ...meta.components.map((c) => `${c.type}: ${c.description}`),
+    ...meta.screens.map((s) => `${s.name}: ${s.description}`),
+  ].join("\n");
+  db.prepare(
+    `INSERT INTO designs_fts (slug, title, category, tags, note, analysis, components_text)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run(meta.slug, meta.title, meta.category, meta.tags.join(" "), meta.note, analysis, componentsText);
 }
 
 export function reindexAll(db: DatabaseSync): number {
@@ -85,7 +87,7 @@ export function reindexAll(db: DatabaseSync): number {
   // One outer transaction: a corrupt meta.json must abort the rebuild, never leave a half-wiped catalog.
   transaction(db, () => {
     db.exec("DELETE FROM tags; DELETE FROM components; DELETE FROM colors; DELETE FROM designs; DELETE FROM designs_fts;");
-    for (const slug of slugs) upsertDesign(db, readMeta(slug), readAnalysis(slug));
+    for (const slug of slugs) writeDesign(db, readMeta(slug), readAnalysis(slug));
   });
   return slugs.length;
 }
