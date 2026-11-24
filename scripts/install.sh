@@ -12,8 +12,6 @@ command -v node >/dev/null 2>&1 || { echo "ERROR: node not found on PATH" >&2; e
 NODE_BIN="$(command -v node)"
 TSX="$REPO/node_modules/tsx/dist/cli.mjs"
 SERVER="$REPO/src/server.ts"
-HOOK="$REPO/hooks/design-prompt.sh"
-SETTINGS="$HOME/.claude/settings.json"
 
 echo "== good-eye install (repo: $REPO) =="
 
@@ -34,25 +32,7 @@ else
   claude mcp add --scope user good-eye -- "$NODE_BIN" "$TSX" "$SERVER"
 fi
 
-# 4. UserPromptSubmit hook (backup, then dedupe-merge)
-if [ "$DRY" = 1 ]; then
-  echo "DRY: merge hook into $SETTINGS (command: $HOOK)"
-else
-  [ -f "$SETTINGS" ] && cp "$SETTINGS" "$SETTINGS.backup-$(date +%s)"
-  HOOK_CMD="$HOOK" SETTINGS_FILE="$SETTINGS" "$NODE_BIN" -e '
-    const fs = require("fs");
-    const file = process.env.SETTINGS_FILE, cmd = process.env.HOOK_CMD;
-    const s = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : {};
-    s.hooks ??= {};
-    s.hooks.UserPromptSubmit ??= [];
-    const present = JSON.stringify(s.hooks.UserPromptSubmit).includes(cmd);
-    if (!present) s.hooks.UserPromptSubmit.push({ hooks: [{ type: "command", command: cmd }] });
-    fs.writeFileSync(file, JSON.stringify(s, null, 2));
-    console.error(present ? "hook already installed" : "hook installed");
-  '
-fi
-
-# 5. Manual snippets for other clients
+# 4. Manual snippets for other clients
 cat <<EOF
 
 == Claude Desktop: add to claude_desktop_config.json ==
