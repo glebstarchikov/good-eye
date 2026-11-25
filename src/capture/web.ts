@@ -499,6 +499,9 @@ export async function captureWeb(url: string, opts: { note?: string; force?: boo
     // Only a challenge is worth a second attempt. Everything else (dead host, 404, a stalled
     // deferred script we already captured through) would fail identically and just burn a minute.
     if (!(err instanceof CaptureError) || err.kind !== "blocked") throw err;
+    if (inBackground()) {
+      throw new CaptureError("blocked", `${err.message}\nRunning in the background, so no visible browser was opened; capture it by hand.`);
+    }
     console.error(`good-eye: ${url} looks challenged; retrying once in a real browser…`);
     try {
       return await runCapture(url, { slug, dir, domain, note: opts.note ?? "" }, REAL_BROWSER);
@@ -516,6 +519,12 @@ export async function captureWeb(url: string, opts: { note?: string; force?: boo
 /** A headed, real-Chrome launch: the profile a challenge is most likely to wave through. Falls over
  * with a clear launch error if Chrome isn't installed, which captureWeb folds into its message. */
 const REAL_BROWSER = { channel: "chrome", headless: false } as const;
+
+/** An unattended run (a collector, a webhook) sets GOOD_EYE_BACKGROUND=1: the visible retry would take
+ *  over the screen of someone who didn't ask for a capture. */
+export function inBackground(): boolean {
+  return process.env.GOOD_EYE_BACKGROUND === "1";
+}
 
 const PLAYWRIGHT_CLI = path.join(path.dirname(createRequire(import.meta.url).resolve("playwright/package.json")), "cli.js");
 
