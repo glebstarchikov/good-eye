@@ -31,6 +31,8 @@ function seedCaptured() {
 
 beforeEach(() => {
   process.env.GOOD_EYE_CLAUDE_BIN = fakeClaude;
+  // The librarian must set this itself; a value inherited from the test runner would hide a regression.
+  process.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY = "0";
 });
 afterEach(() => {
   delete process.env.GOOD_EYE_CLAUDE_BIN;
@@ -39,6 +41,7 @@ afterEach(() => {
   delete process.env.FAKE_CLAUDE_FENCED;
   delete process.env.FAKE_CLAUDE_OUTPUT;
   delete process.env.FAKE_CLAUDE_ARGV;
+  delete process.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY;
 });
 
 const goodOutput = JSON.parse(fs.readFileSync(path.join(path.dirname(fakeClaude), "good.json"), "utf8"));
