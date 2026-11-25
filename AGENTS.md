@@ -1,8 +1,8 @@
 # AGENTS.md
 
-good-eye is Gleb's design-inspiration library: full-page screenshots, component crops, palettes, typography and a written review for each site or app, searchable by Claude over MCP. It ships as a Claude Code plugin (MCP server and a skill) from the `glebstarchikov` marketplace, and design-factory's references step reads from it. TypeScript run directly through tsx on Node 22, with SQLite FTS5, Playwright and Sharp.
+good-eye is Gleb's design-inspiration library: full-page screenshots, component crops, palettes, typography and a written review for each site or app, searchable by Claude over MCP. It ships as a Claude Code plugin (MCP server and a skill) from the `glebstarchikov` marketplace, and design-factory's references step reads from it. TypeScript run directly through tsx on Node 22.13+ (for `node:sqlite`), with Playwright and Sharp.
 
-Agent instructions live in this file. CLAUDE.md is the single line `@AGENTS.md`, so new instructions go here.
+Write new agent instructions here. CLAUDE.md stays the single line `@AGENTS.md`.
 
 ## Setup
 
@@ -16,15 +16,16 @@ Before you finish, run what CI runs: `npm run typecheck && npm test && npm run s
 
 ## Layout
 
-- The library lives outside the checkout, in `~/.good-eye/data` or `$GOOD_EYE_DATA_DIR`. Each design is a folder under `designs/<slug>/`, and its `meta.json` and `analysis.md` are the source of truth. `catalog.db` is a derived FTS5 index that `reindex` rebuilds.
-- `src/capture/` takes the screenshots: web pages through Playwright, apps from a store link or a folder of screenshots. `src/librarian/` writes the review by calling `claude -p` with Read as its only tool. `src/server.ts` is the MCP server and `src/cli.ts` runs the same operations from a shell.
-- `src/lib/vocab.ts` holds the fixed categories and style tags. The librarian keeps vocabulary tags plus at most 3 free-form ones.
+- `src/capture/` takes the screenshots: web pages through Playwright, apps from a store link or a folder of screenshots. `src/librarian/` writes the review by running `claude -p` with `--allowedTools Read`, which pre-approves Read but leaves the other tools in place, on text taken from third-party pages. `src/server.ts` is the MCP server, and `src/cli.ts` is a shell front end to the same modules.
+- "spec §N" in code comments means `docs/superpowers/specs/2026-07-11-design-inspiration-db-design.md`.
 
 ## Conventions
 
-- Keep the default data folder outside the repo. Installed as a plugin, the repo is a versioned cache folder that is replaced on every upgrade, so a repo-relative default would strand the catalog. `src/lib/paths.ts` explains it.
+- Keep the data folder outside the repo (`~/.good-eye/data` by default). Installed as a plugin, the repo is a versioned cache folder that is replaced on every upgrade; `src/lib/paths.ts` explains it.
+- Change a library entry by editing its `meta.json` or `analysis.md`, then run `reindex`. `catalog.db` is derived from those files.
+- New style tags go in `STYLE_TAGS` in `src/lib/vocab.ts`. Tags outside it are capped at 3 per entry by `trimTags` in `src/librarian/analyze.ts`.
+- Log with `console.error` everywhere except `src/cli.ts`: the MCP server speaks over stdout, and one stray line breaks every tool call.
 - Tests call `tempDataDir()` from `tests/helpers.ts` first and point `GOOD_EYE_CLAUDE_BIN` at `tests/fixtures/librarian/fake-claude.sh`, so a test run never touches the real library or spends model calls. New tests do the same.
-- The capture timeouts in `src/capture/web.ts` are tuned on purpose, and the comments there give the reasons. Read them before changing a budget.
-- Challenge pages are recognised by live DOM structure, never by text in the HTML, because the library captures developer-tool sites that mention challenge URLs in prose.
-- The plugin installer runs `npm ci --ignore-scripts`, so every dependency has to work without its install script. `npm run smoke:install` proves it; run it after adding or upgrading a dependency.
-- A release bumps `version` in `package.json` and `.claude-plugin/plugin.json`, then the good-eye entry in `claude-plugins`' `.claude-plugin/marketplace.json`, including its pinned `sha`.
+- `src/capture/web.ts` holds hard-won capture behaviour: the time budgets, and challenge detection by live DOM structure. Its comments give the reasons; keep that behaviour unless the task is to change it.
+- The plugin installer puts `node_modules` in place without running install scripts, so every dependency has to work without one. That rules out native add-ons, and it is why SQLite is `node:sqlite` rather than better-sqlite3 (the fix in 0.2.4). Run `npm run smoke:install` after adding or upgrading a dependency.
+- Merging to main ships nothing to users: they run the commit pinned by `sha` in claude-plugins' `.claude-plugin/marketplace.json`, security fixes included. A release runs `npm version <x.y.z> --no-git-tag-version`, sets the same version in `.claude-plugin/plugin.json`, merges, then points the marketplace entry's `version` and `sha` at the merge commit.
