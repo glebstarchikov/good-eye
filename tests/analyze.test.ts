@@ -67,38 +67,57 @@ function seedApp() {
   return meta;
 }
 
-/** Run analyze once and return each option it passed to claude, with the values that followed it. */
-async function librarianOptions(slug: string): Promise<Map<string, string[]>> {
+/** Run analyze once and return the folder claude ran in, and each option with the values that followed it. */
+async function librarianRun(slug: string): Promise<{ cwd: string; options: Map<string, string[]> }> {
   const argvFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "fake-argv-")), "argv");
   process.env.FAKE_CLAUDE_ARGV = argvFile;
   await analyze(slug);
+  const [cwd, ...argv] = fs.readFileSync(argvFile, "utf8").split("\0").slice(0, -1);
   const options = new Map<string, string[]>();
   let current = "";
-  for (const arg of fs.readFileSync(argvFile, "utf8").split("\0").slice(0, -1)) {
+  for (const arg of argv) {
     if (!arg.startsWith("-")) { options.get(current)!.push(arg); continue; }
     assert.ok(!options.has(arg), `${arg} passed twice`);
     options.set(current = arg, []);
   }
-  return options;
+  return { cwd: cwd!, options };
 }
 
 // The librarian reads text taken from third-party pages, so an instruction planted there must find
-// no tool to reach for but Read: no other built-in, no MCP server, nothing the user's settings add.
-test("the librarian gets Read as its only tool, no MCP servers and none of the user's settings", async () => {
+// no tool to reach for but Read, and nothing to Read outside the entry: no other built-in, no MCP
+// server, nothing the user's settings add, and no file elsewhere on the machine.
+test("the librarian gets Read only, inside the entry only, with no MCP servers and none of the user's settings", async () => {
   tempDataDir();
   const seeded = seedCaptured();
-  const options = await librarianOptions(seeded.slug);
+  const dir = designDir(seeded.slug);
+  const { cwd, options } = await librarianRun(seeded.slug);
 
+  assert.equal(cwd, fs.realpathSync(dir)); // the entry is the only working directory, where reads need no approval
   assert.deepEqual(options.get("--tools"), ["Read"]); // the only built-in tool that exists in the run
-  assert.deepEqual(options.get("--allowedTools"), ["Read"]); // and the only one approved without a prompt
+  // and approved without a prompt only under the entry; `//` anchors at the filesystem root, where a
+  // single `/` would anchor at the working directory. Any other read would prompt, which -p refuses.
+  assert.deepEqual(options.get("--allowedTools"), [`Read(/${dir}/**)`]);
   assert.deepEqual(options.get("--strict-mcp-config"), []); // skips every MCP server configured anywhere
   assert.equal(options.has("--mcp-config"), false); // and passes none in their place
   assert.deepEqual(options.get("--setting-sources"), [""]); // no settings files: their hooks, plugins, permission mode
-  assert.deepEqual(options.get("--add-dir"), [designDir(seeded.slug)]); // Read still reaches the entry
+  assert.deepEqual(options.get("--no-session-persistence"), []); // no transcript folder per entry in ~/.claude
   // Any other flag (a permission mode, a plugin dir, an MCP config) must arrive as a deliberate change here.
   assert.deepEqual([...options.keys()].sort(), [
-    "--add-dir", "--allowedTools", "--model", "--output-format", "--setting-sources", "--strict-mcp-config", "--tools", "-p",
+    "--allowedTools", "--model", "--no-session-persistence", "--output-format", "--setting-sources",
+    "--strict-mcp-config", "--tools", "-p",
   ]);
+});
+
+test("with a relative GOOD_EYE_DATA_DIR, Read is still scoped to the entry's absolute path", async () => {
+  const data = tempDataDir();
+  const seeded = seedCaptured();
+  process.env.GOOD_EYE_DATA_DIR = path.relative(process.cwd(), data);
+  const dir = path.join(data, "designs", seeded.slug);
+  const { cwd, options } = await librarianRun(seeded.slug);
+
+  assert.equal(cwd, fs.realpathSync(dir));
+  assert.deepEqual(options.get("--allowedTools"), [`Read(/${dir}/**)`]);
+  assert.equal(readMeta(seeded.slug).status, "complete");
 });
 
 test("analyze applies librarian output, renames crops, promotes status, indexes", async () => {

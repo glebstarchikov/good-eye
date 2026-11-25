@@ -16,17 +16,20 @@ const execFileAsync = promisify(execFile);
 async function runClaude(prompt: string, dir: string): Promise<string> {
   const bin = process.env.GOOD_EYE_CLAUDE_BIN ?? "claude";
   const model = process.env.GOOD_EYE_MODEL ?? "sonnet";
-  // The prompt carries text from third-party pages, so the run gets nothing to steer but Read:
-  // --tools removes every other built-in, --strict-mcp-config every MCP server, and
-  // --setting-sources "" the user's settings files with their hooks, plugins and permission mode.
+  // The prompt carries text from third-party pages, so the run gets nothing to steer but Read, and
+  // nothing to Read outside the entry. It runs in dir, its only working directory, and pre-approves
+  // Read under dir alone (`//` anchors at the filesystem root), so any other read would prompt, which
+  // -p refuses. --tools removes every other built-in, --strict-mcp-config every MCP server,
+  // --setting-sources "" the user's settings with their hooks, plugins and permission mode, and
+  // --no-session-persistence a transcript folder per entry under ~/.claude/projects.
   const { stdout } = await execFileAsync(
     bin,
     [
       "-p", prompt, "--output-format", "json", "--model", model,
-      "--tools", "Read", "--allowedTools", "Read", "--strict-mcp-config", "--setting-sources", "",
-      "--add-dir", dir,
+      "--tools", "Read", "--allowedTools", `Read(/${dir}/**)`, "--strict-mcp-config", "--setting-sources", "",
+      "--no-session-persistence",
     ],
-    { maxBuffer: 32 * 1024 * 1024, timeout: 300_000 }
+    { cwd: dir, maxBuffer: 32 * 1024 * 1024, timeout: 300_000 }
   );
   const envelope = JSON.parse(stdout) as { result?: string };
   if (typeof envelope.result !== "string") throw new Error("claude -p envelope had no result string");
@@ -105,7 +108,7 @@ function applyLibrarian(meta: Meta, out: LibrarianOutput, dir: string): Meta {
 }
 
 export async function analyze(slug: string): Promise<Meta> {
-  const dir = designDir(slug);
+  const dir = path.resolve(designDir(slug)); // absolute: the librarian runs in it and is scoped to it
   let meta = readMeta(slug);
   const basePrompt = buildPrompt(meta, dir);
   let lastError = "";
