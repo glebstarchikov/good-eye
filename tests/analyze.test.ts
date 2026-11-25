@@ -31,6 +31,8 @@ function seedCaptured() {
 
 beforeEach(() => {
   process.env.GOOD_EYE_CLAUDE_BIN = fakeClaude;
+  // The librarian must set this itself; a value inherited from the test runner would hide a regression.
+  process.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY = "0";
 });
 afterEach(() => {
   delete process.env.GOOD_EYE_CLAUDE_BIN;
@@ -38,6 +40,8 @@ afterEach(() => {
   delete process.env.FAKE_CLAUDE_ALWAYS_BAD;
   delete process.env.FAKE_CLAUDE_FENCED;
   delete process.env.FAKE_CLAUDE_OUTPUT;
+  delete process.env.FAKE_CLAUDE_ARGV;
+  delete process.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY;
 });
 
 const goodOutput = JSON.parse(fs.readFileSync(path.join(path.dirname(fakeClaude), "good.json"), "utf8"));
@@ -65,6 +69,77 @@ function seedApp() {
   fs.writeFileSync(path.join(dir, "screens", "screen-02.png"), "s2");
   return meta;
 }
+
+/**
+ * Run analyze once and return what claude was started with: the folder it ran in, its
+ * CLAUDE_CODE_DISABLE_AUTO_MEMORY, and each option with the values that followed it.
+ */
+async function librarianRun(slug: string) {
+  const argvFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "fake-argv-")), "argv");
+  process.env.FAKE_CLAUDE_ARGV = argvFile;
+  await analyze(slug);
+  const [cwd, autoMemoryOff, ...argv] = fs.readFileSync(argvFile, "utf8").split("\0").slice(0, -1);
+  const options = new Map<string, string[]>();
+  let current = "";
+  for (const arg of argv) {
+    if (!arg.startsWith("-")) { options.get(current)!.push(arg); continue; }
+    assert.ok(!options.has(arg), `${arg} passed twice`);
+    options.set(current = arg, []);
+  }
+  return { cwd: cwd!, autoMemoryOff: autoMemoryOff!, options };
+}
+
+// The librarian reads text taken from third-party pages, so an instruction planted there must find
+// no tool to reach for but Read, and nothing to Read outside the entry. analyze.ts says why each flag.
+test("the librarian gets Read only, inside the entry only, with no MCP servers and none of the user's settings", async () => {
+  tempDataDir();
+  const seeded = seedCaptured();
+  const dir = fs.realpathSync(designDir(seeded.slug));
+  const { cwd, autoMemoryOff, options } = await librarianRun(seeded.slug);
+
+  assert.equal(cwd, dir);
+  assert.deepEqual(options.get("--permission-mode"), ["dontAsk"]);
+  assert.deepEqual(options.get("--tools"), ["Read"]);
+  assert.deepEqual(options.get("--allowedTools"), [`Read(/${dir}/**)`]); // `//`: absolute, not under the cwd
+  assert.deepEqual(options.get("--strict-mcp-config"), []);
+  assert.equal(options.has("--mcp-config"), false);
+  assert.deepEqual(options.get("--setting-sources"), [""]);
+  assert.deepEqual(options.get("--no-session-persistence"), []);
+  assert.equal(autoMemoryOff, "1");
+  // Any other flag (another permission mode, a plugin dir, an MCP config) must arrive as a deliberate change here.
+  assert.deepEqual([...options.keys()].sort(), [
+    "--allowedTools", "--model", "--no-session-persistence", "--output-format", "--permission-mode",
+    "--setting-sources", "--strict-mcp-config", "--tools", "-p",
+  ]);
+});
+
+test("with a relative GOOD_EYE_DATA_DIR, Read is still scoped to the entry's absolute path", async () => {
+  const data = tempDataDir();
+  const seeded = seedCaptured();
+  process.env.GOOD_EYE_DATA_DIR = path.relative(process.cwd(), data);
+  const dir = fs.realpathSync(path.join(data, "designs", seeded.slug));
+  const { cwd, options } = await librarianRun(seeded.slug);
+
+  assert.equal(cwd, dir);
+  assert.deepEqual(options.get("--allowedTools"), [`Read(/${dir}/**)`]);
+  assert.equal(readMeta(seeded.slug).status, "complete");
+});
+
+// claude runs in the real folder and allows Read by real path, so a data folder reached through a
+// symlink (a synced folder, macOS /tmp) must still list real paths, or every Read is refused.
+test("through a symlinked data folder, every file the prompt lists is inside the folder claude runs in", async () => {
+  const data = tempDataDir();
+  const seeded = seedCaptured();
+  const link = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "link-")), "data");
+  fs.symlinkSync(data, link);
+  process.env.GOOD_EYE_DATA_DIR = link;
+  const { cwd, options } = await librarianRun(seeded.slug);
+
+  const listed = options.get("-p")![0]!.split("\n").filter((line) => line.startsWith("/"));
+  assert.ok(listed.length >= 2, "the prompt lists the crops");
+  for (const file of listed) assert.ok(file.startsWith(cwd + path.sep), `${file} is outside ${cwd}`);
+  assert.deepEqual(options.get("--allowedTools"), [`Read(/${cwd}/**)`]);
+});
 
 test("analyze applies librarian output, renames crops, promotes status, indexes", async () => {
   tempDataDir();
@@ -143,7 +218,7 @@ test("partial capture stays partial after successful analysis", async () => {
 test("analyze applies crops the librarian names by absolute path", async () => {
   tempDataDir();
   const seeded = seedCaptured();
-  const dir = designDir(seeded.slug);
+  const dir = fs.realpathSync(designDir(seeded.slug)); // the prompt lists real paths, so those come back
   librarianSays({
     components: goodOutput.components.map((c: { file: string }) => ({ ...c, file: path.join(dir, c.file) })),
   });
@@ -158,7 +233,7 @@ test("analyze applies crops the librarian names by absolute path", async () => {
 test("analyze names app screens given by absolute path, and never deletes a screen it skipped", async () => {
   tempDataDir();
   const seeded = seedApp();
-  const dir = designDir(seeded.slug);
+  const dir = fs.realpathSync(designDir(seeded.slug)); // the prompt lists real paths, so those come back
   librarianSays({
     components: [],
     screens: [{ file: path.join(dir, "screens/screen-01.png"), name: "onboarding", description: "a welcome card" }],

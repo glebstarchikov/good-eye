@@ -16,10 +16,25 @@ const execFileAsync = promisify(execFile);
 async function runClaude(prompt: string, dir: string): Promise<string> {
   const bin = process.env.GOOD_EYE_CLAUDE_BIN ?? "claude";
   const model = process.env.GOOD_EYE_MODEL ?? "sonnet";
+  // The prompt carries text from third-party pages, so the run gets nothing to steer but Read, and
+  // nothing to Read outside the entry. It runs in dir (a real path), its only working directory.
+  // --permission-mode dontAsk denies anything that would prompt; left unset, a run can start in auto
+  // mode (managed settings, or a CLI before 2.1.302) and read anywhere. --tools removes every other
+  // built-in. --allowedTools pre-approves Read under dir alone (`//` anchors at the filesystem root).
+  // --strict-mcp-config loads no MCP server, --setting-sources "" no settings file with its hooks,
+  // plugins and permission mode. --no-session-persistence and CLAUDE_CODE_DISABLE_AUTO_MEMORY leave
+  // no transcript or memory folder per entry under ~/.claude/projects.
   const { stdout } = await execFileAsync(
     bin,
-    ["-p", prompt, "--output-format", "json", "--model", model, "--allowedTools", "Read", "--add-dir", dir],
-    { maxBuffer: 32 * 1024 * 1024, timeout: 300_000 }
+    [
+      "-p", prompt, "--output-format", "json", "--model", model,
+      "--permission-mode", "dontAsk", "--tools", "Read", "--allowedTools", `Read(/${dir}/**)`,
+      "--strict-mcp-config", "--setting-sources", "", "--no-session-persistence",
+    ],
+    {
+      cwd: dir, env: { ...process.env, CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1" },
+      maxBuffer: 32 * 1024 * 1024, timeout: 300_000,
+    }
   );
   const envelope = JSON.parse(stdout) as { result?: string };
   if (typeof envelope.result !== "string") throw new Error("claude -p envelope had no result string");
@@ -98,8 +113,10 @@ function applyLibrarian(meta: Meta, out: LibrarianOutput, dir: string): Meta {
 }
 
 export async function analyze(slug: string): Promise<Meta> {
-  const dir = designDir(slug);
   let meta = readMeta(slug);
+  // The librarian runs in dir and may Read only under it, both by real path, so the files the prompt
+  // lists must be real paths too: one through a symlinked data folder would be refused.
+  const dir = fs.realpathSync(designDir(slug));
   const basePrompt = buildPrompt(meta, dir);
   let lastError = "";
   let succeeded = false;

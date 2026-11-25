@@ -4,7 +4,12 @@
 # FAKE_CLAUDE_STATE=<file>        -> emit bad.json on first call, good.json after (tests the retry)
 # FAKE_CLAUDE_FENCED=1            -> wrap good.json in a ```json fence plus surrounding prose
 # FAKE_CLAUDE_OUTPUT=<file>       -> emit this file instead of good.json
+# FAKE_CLAUDE_ARGV=<file>         -> write its working directory, its CLAUDE_CODE_DISABLE_AUTO_MEMORY
+#                                    ("unset" if unset), then its arguments, NUL-separated
 DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ -n "${FAKE_CLAUDE_ARGV:-}" ]; then
+  printf '%s\0' "$(pwd -P)" "${CLAUDE_CODE_DISABLE_AUTO_MEMORY-unset}" "$@" > "$FAKE_CLAUDE_ARGV"
+fi
 FILE="${FAKE_CLAUDE_OUTPUT:-$DIR/good.json}"
 if [ -n "${FAKE_CLAUDE_STATE:-}" ]; then
   if [ ! -f "$FAKE_CLAUDE_STATE" ]; then
