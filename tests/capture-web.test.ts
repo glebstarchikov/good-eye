@@ -7,7 +7,7 @@ import sharp from "sharp";
 import { tempDataDir, startFixtureServer } from "./helpers.js";
 import { designDir } from "../src/lib/paths.js";
 import { readMeta } from "../src/lib/meta.js";
-import { captureWeb, salvageOrCleanup, gotoReady, looksChallenged, clearOverlays, CaptureError } from "../src/capture/web.js";
+import { captureWeb, salvageOrCleanup, gotoReady, looksChallenged, clearOverlays, CaptureError, inBackground } from "../src/capture/web.js";
 
 let base: string;
 let close: () => void;
@@ -71,6 +71,38 @@ test("same-day duplicate is refused without force, allowed with force", async ()
   await assert.rejects(() => captureWeb(base), /already exists/);
   const again = await captureWeb(base, { force: true });
   assert.equal(again, slug);
+});
+
+test("in the background, a blocked site is queued for a person: no visible browser, no entry", async () => {
+  const tmp = tempDataDir();
+  process.env.GOOD_EYE_BACKGROUND = "1";
+  try {
+    await assert.rejects(() => captureWeb(`${base}forbidden`), (err: unknown) => {
+      assert.ok(err instanceof CaptureError);
+      assert.equal(err.kind, "blocked");
+      assert.match(err.message, /no visible browser was opened/);
+      // The visible retry always adds one of these, so their absence shows it never ran.
+      assert.doesNotMatch(err.message, /same wall|real-browser retry/);
+      return true;
+    });
+  } finally {
+    delete process.env.GOOD_EYE_BACKGROUND;
+  }
+  assert.ok(!fs.existsSync(path.join(tmp, "designs")) || fs.readdirSync(path.join(tmp, "designs")).length === 0);
+});
+
+test("only GOOD_EYE_BACKGROUND=1 turns the visible retry off; unset, 0 or true leave it on", () => {
+  const was = process.env.GOOD_EYE_BACKGROUND;
+  try {
+    for (const [value, background] of [[undefined, false], ["", false], ["0", false], ["true", false], ["1", true]] as const) {
+      if (value === undefined) delete process.env.GOOD_EYE_BACKGROUND;
+      else process.env.GOOD_EYE_BACKGROUND = value;
+      assert.equal(inBackground(), background, `GOOD_EYE_BACKGROUND=${value}`);
+    }
+  } finally {
+    if (was === undefined) delete process.env.GOOD_EYE_BACKGROUND;
+    else process.env.GOOD_EYE_BACKGROUND = was;
+  }
 });
 
 test("hard load failure creates no entry", async () => {
