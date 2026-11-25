@@ -24,6 +24,9 @@ Layout:
 - `~/.good-eye/data/catalog.db` is a derived SQLite/FTS5 index (`cli.ts reindex` rebuilds it)
 - `src/` holds the capture pipeline, librarian, CLI, and MCP server; `skills/` and `scripts/` hold the rest
 
+## Status
+Active, November 2026.
+
 ## License
 MIT
 
