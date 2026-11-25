@@ -38,6 +38,7 @@ afterEach(() => {
   delete process.env.FAKE_CLAUDE_ALWAYS_BAD;
   delete process.env.FAKE_CLAUDE_FENCED;
   delete process.env.FAKE_CLAUDE_OUTPUT;
+  delete process.env.FAKE_CLAUDE_ARGV;
 });
 
 const goodOutput = JSON.parse(fs.readFileSync(path.join(path.dirname(fakeClaude), "good.json"), "utf8"));
@@ -65,6 +66,40 @@ function seedApp() {
   fs.writeFileSync(path.join(dir, "screens", "screen-02.png"), "s2");
   return meta;
 }
+
+/** Run analyze once and return each option it passed to claude, with the values that followed it. */
+async function librarianOptions(slug: string): Promise<Map<string, string[]>> {
+  const argvFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "fake-argv-")), "argv");
+  process.env.FAKE_CLAUDE_ARGV = argvFile;
+  await analyze(slug);
+  const options = new Map<string, string[]>();
+  let current = "";
+  for (const arg of fs.readFileSync(argvFile, "utf8").split("\0").slice(0, -1)) {
+    if (!arg.startsWith("-")) { options.get(current)!.push(arg); continue; }
+    assert.ok(!options.has(arg), `${arg} passed twice`);
+    options.set(current = arg, []);
+  }
+  return options;
+}
+
+// The librarian reads text taken from third-party pages, so an instruction planted there must find
+// no tool to reach for but Read: no other built-in, no MCP server, nothing the user's settings add.
+test("the librarian gets Read as its only tool, no MCP servers and none of the user's settings", async () => {
+  tempDataDir();
+  const seeded = seedCaptured();
+  const options = await librarianOptions(seeded.slug);
+
+  assert.deepEqual(options.get("--tools"), ["Read"]); // the only built-in tool that exists in the run
+  assert.deepEqual(options.get("--allowedTools"), ["Read"]); // and the only one approved without a prompt
+  assert.deepEqual(options.get("--strict-mcp-config"), []); // skips every MCP server configured anywhere
+  assert.equal(options.has("--mcp-config"), false); // and passes none in their place
+  assert.deepEqual(options.get("--setting-sources"), [""]); // no settings files: their hooks, plugins, permission mode
+  assert.deepEqual(options.get("--add-dir"), [designDir(seeded.slug)]); // Read still reaches the entry
+  // Any other flag (a permission mode, a plugin dir, an MCP config) must arrive as a deliberate change here.
+  assert.deepEqual([...options.keys()].sort(), [
+    "--add-dir", "--allowedTools", "--model", "--output-format", "--setting-sources", "--strict-mcp-config", "--tools", "-p",
+  ]);
+});
 
 test("analyze applies librarian output, renames crops, promotes status, indexes", async () => {
   tempDataDir();

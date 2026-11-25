@@ -16,9 +16,16 @@ const execFileAsync = promisify(execFile);
 async function runClaude(prompt: string, dir: string): Promise<string> {
   const bin = process.env.GOOD_EYE_CLAUDE_BIN ?? "claude";
   const model = process.env.GOOD_EYE_MODEL ?? "sonnet";
+  // The prompt carries text from third-party pages, so the run gets nothing to steer but Read:
+  // --tools removes every other built-in, --strict-mcp-config every MCP server, and
+  // --setting-sources "" the user's settings files with their hooks, plugins and permission mode.
   const { stdout } = await execFileAsync(
     bin,
-    ["-p", prompt, "--output-format", "json", "--model", model, "--allowedTools", "Read", "--add-dir", dir],
+    [
+      "-p", prompt, "--output-format", "json", "--model", model,
+      "--tools", "Read", "--allowedTools", "Read", "--strict-mcp-config", "--setting-sources", "",
+      "--add-dir", dir,
+    ],
     { maxBuffer: 32 * 1024 * 1024, timeout: 300_000 }
   );
   const envelope = JSON.parse(stdout) as { result?: string };

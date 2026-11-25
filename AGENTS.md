@@ -16,7 +16,7 @@ Before you finish, run what CI runs: `npm run typecheck && npm test && npm run s
 
 ## Layout
 
-- `src/capture/` takes the screenshots: web pages through Playwright, apps from a store link or a folder of screenshots. `src/librarian/` writes the review by running `claude -p` on text taken from third-party pages. It passes `--allowedTools Read`, which pre-approves Read but leaves the other tools in place. `src/server.ts` is the MCP server, and `src/cli.ts` is a shell front end to the same modules.
+- `src/capture/` takes the screenshots: web pages through Playwright, apps from a store link or a folder of screenshots. `src/librarian/` writes the review by running `claude -p` on text taken from third-party pages, so that run gets Read and nothing else: `--tools Read` removes the other built-in tools, `--allowedTools Read` spares Read a prompt, `--strict-mcp-config` loads no MCP servers, and `--setting-sources ""` loads no settings files (no user hooks, plugins or permission mode). A test in `tests/analyze.test.ts` pins that flag list; widen it only on purpose. `src/server.ts` is the MCP server, and `src/cli.ts` is a shell front end to the same modules.
 - "spec §N" in code comments means `docs/superpowers/specs/2026-07-11-design-inspiration-db-design.md`, the original July design. It is out of date on storage, SQLite, the Node version and the prompt hook; where it disagrees, the code and this file win.
 
 ## Conventions
