@@ -15,6 +15,8 @@ claude plugin install good-eye@glebstarchikov
 
 This installs the MCP server and the skill as a Claude Code plugin. There is no hook. For Claude Desktop and Codex, `bash scripts/install.sh --dry-run` prints config snippets.
 
+The review of each design is written by `claude -p`, run without your settings files, so it signs in through `claude login` or real environment variables. Auth set only in `~/.claude/settings.json` (`apiKeyHelper`, `env`) won't reach it.
+
 Add a design: tell Claude "add https://stripe.com to the design library, look at their pricing" (or run `node --import tsx src/cli.ts add <url> --note "..."` from the repo). You can also paste an App Store or Play Store link, or ingest a folder of screenshots.
 
 Search happens when design-factory's references step asks for it, or when you ask Claude to look something up. To search manually: `node --import tsx src/cli.ts search dark pricing --tag dark-mode`.
