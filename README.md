@@ -2,6 +2,8 @@
 
 A personal design-inspiration database, searchable by Claude through MCP.
 
+![Claude Code asked for a calm landing page for a developer tool: it searches good-eye and answers with Cursor, Vercel and unvalley.me, why each fits, and their palettes](docs/claude-search.png)
+
 Instead of scrolling through bookmarks when a project needs a design direction, good-eye keeps full-page screenshots, component crops, palettes, typography, and a written review for every site or app worth stealing from. Claude (Code, Desktop) and Codex can search it directly through the `good-eye` MCP server, so design inspiration shows up automatically while designing something rather than requiring a manual lookup.
 
 ## Stack
