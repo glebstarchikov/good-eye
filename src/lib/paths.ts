@@ -54,11 +54,12 @@ export function makeSlug(name: string, date: Date = new Date()): string {
   return `${cleanName(name, 60)}--${date.toISOString().slice(0, 10)}`;
 }
 
-/** Which page a URL is: its host without www, and its path without a trailing slash. The protocol,
- * query and # part don't count. good-eye-app's capture worker keeps a copy; keep the two in step. */
+/** Which page a URL is: its host (with any port) without www, and its path without a trailing slash.
+ * The protocol, query and # part don't count. good-eye-app's capture worker keeps a copy in
+ * tools/capture-worker/page.mjs; keep the two in step. */
 export function pageKey(url: string): string {
   const u = new URL(url);
-  return u.hostname.replace(/^www\./, "") + u.pathname.replace(/\/+$/, "");
+  return u.host.replace(/^www\./, "") + u.pathname.replace(/\/+$/, "");
 }
 
 /** "https://linear.app/changelog" -> "linear-app-changelog-<6 hex>--2026-11-26". The code comes from

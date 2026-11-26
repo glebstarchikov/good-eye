@@ -48,6 +48,7 @@ test("pageKey: www, protocol, query, # part and a trailing slash don't make a di
   ]) assert.equal(pageKey(url), key, url);
   assert.equal(pageKey("https://www.stripe.com/"), "stripe.com");
   assert.equal(pageKey("https://stripe.com"), "stripe.com");
+  assert.equal(pageKey("https://example.com:443/"), pageKey("https://example.com/")); // the default port
 });
 
 test("pageKey: another path, path case or subdomain is a different page", () => {
@@ -56,6 +57,7 @@ test("pageKey: another path, path case or subdomain is a different page", () => 
     "https://linear.app/", "https://linear.app/changelog/2026", "https://linear.app/Changelog",
     "https://docs.linear.app/changelog", "https://linear.app.evil.io/changelog",
   ]) assert.notEqual(pageKey(url), key, url);
+  assert.notEqual(pageKey("http://localhost:3000/"), pageKey("http://localhost:5173/"));
 });
 
 test("webSlug names an entry by its page, with a short code, and the same page always gets the same name", () => {
