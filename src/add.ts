@@ -4,7 +4,8 @@ import { captureWeb } from "./capture/web.js";
 import { analyze, reviewIn } from "./librarian/analyze.js";
 import { openDb, upsertDesign } from "./lib/db.js";
 import { readAnalysis, readMeta, type Meta } from "./lib/meta.js";
-import { ABANDONED_AFTER_MS, dataDir, designDir, ensureDir, lastTouched, stagingDir, webSlug } from "./lib/paths.js";
+import { isLocked, withPageLock } from "./lib/lock.js";
+import { ABANDONED_AFTER_MS, designDir, ensureDir, lastTouched, stagingDir, webSlug } from "./lib/paths.js";
 
 /** Captures a web page and reviews it into the library. One add per page runs at a time, across the
  * CLI, the MCP server and good-eye-app's worker. With force, an existing entry for the page is
@@ -12,17 +13,14 @@ import { ABANDONED_AFTER_MS, dataDir, designDir, ensureDir, lastTouched, staging
  * either fails, it stays exactly as it was. */
 export async function addWeb(url: string, opts: { note?: string; force?: boolean } = {}): Promise<{ slug: string; meta: Meta }> {
   const slug = webSlug(url);
-  const unlock = lockPage(slug);
-  try {
+  return withPageLock(slug, async () => {
     recoverInterruptedSwaps(slug);
     if (!opts.force || !fs.existsSync(path.join(designDir(slug), "meta.json"))) {
       const captured = await captureWeb(url, { note: opts.note });
       return { slug: captured, meta: await analyze(captured) };
     }
-    return await recapture(url, slug, opts.note);
-  } finally {
-    unlock();
-  }
+    return recapture(url, slug, opts.note);
+  });
 }
 
 async function recapture(url: string, slug: string, note: string | undefined): Promise<{ slug: string; meta: Meta }> {
@@ -49,33 +47,6 @@ async function recapture(url: string, slug: string, note: string | undefined): P
 /** A partial re-capture (a load that broke halfway) never replaces a complete entry. */
 export function shouldReplace(oldStatus: Meta["status"], newStatus: Meta["status"]): boolean {
   return !(oldStatus === "complete" && newStatus === "partial");
-}
-
-const locksDir = () => path.join(dataDir(), ".locks");
-
-/** Takes the page's lock, an atomic mkdir. One left by a killed run is taken over after 15 minutes;
- * a live add, capture and review included, finishes well inside that. */
-function lockPage(slug: string): () => void {
-  const lock = path.join(locksDir(), slug);
-  const busy = () => new Error(`Entry "${slug}" is still being captured; try again in a few minutes`);
-  ensureDir(locksDir());
-  try {
-    fs.mkdirSync(lock);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "EEXIST" || isLocked(slug)) throw busy();
-    fs.rmSync(lock, { recursive: true, force: true });
-    try {
-      fs.mkdirSync(lock);
-    } catch {
-      throw busy(); // another run took the stale lock over first
-    }
-  }
-  return () => fs.rmSync(lock, { recursive: true, force: true });
-}
-
-function isLocked(slug: string): boolean {
-  const lock = path.join(locksDir(), slug);
-  return fs.existsSync(lock) && Date.now() - fs.statSync(lock).mtimeMs < ABANDONED_AFTER_MS;
 }
 
 // The old entry steps aside under this prefix while the new one moves in. A folder can't be renamed

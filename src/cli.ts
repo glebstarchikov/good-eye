@@ -1,6 +1,8 @@
 import { addWeb } from "./add.js";
 import { captureWeb } from "./capture/web.js";
+import { withPageLock } from "./lib/lock.js";
 import type { Meta } from "./lib/meta.js";
+import { webSlug } from "./lib/paths.js";
 import { ingestAppStore, ingestFolder, isStoreUrl } from "./capture/app.js";
 import { analyze } from "./librarian/analyze.js";
 import { openDb, reindexAll, searchDesigns, listTagCounts } from "./lib/db.js";
@@ -71,12 +73,14 @@ async function main(): Promise<void> {
     case "capture": {
       if (!positional[0]) throw new Error("usage: capture <url>");
       if (flags.force) throw new Error("capture has no --force; use add --force, which keeps the old entry until the new one is reviewed");
-      console.log(await captureWeb(positional[0], { note }));
+      const url = positional[0];
+      console.log(await withPageLock(webSlug(url), () => captureWeb(url, { note })));
       break;
     }
     case "analyze": {
       if (!positional[0]) throw new Error("usage: analyze <slug>");
-      const meta = await analyze(positional[0]);
+      const slug = positional[0];
+      const meta = await withPageLock(slug, () => analyze(slug));
       console.log(`analyzed: ${meta.slug} [${meta.status}]`);
       break;
     }

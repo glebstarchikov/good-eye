@@ -93,3 +93,14 @@ test("capture --force is refused, so the old delete-first re-capture can't run; 
   });
   assert.ok(!fs.existsSync(path.join(dir, "designs")), "capture --force still captured");
 });
+
+test("analyze waits its turn: while another run holds the page, it's refused and changes nothing", async () => {
+  const dir = tempDataDir();
+  const lock = path.join(dir, ".locks", "example-com--2026-01-01");
+  fs.mkdirSync(lock, { recursive: true });
+  await assert.rejects(() => cli(["analyze", "example-com--2026-01-01"], dir), (err: { stderr: string }) => {
+    assert.match(err.stderr, /still being captured/);
+    return true;
+  });
+  assert.ok(fs.existsSync(lock));
+});
