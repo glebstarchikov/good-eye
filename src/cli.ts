@@ -1,4 +1,6 @@
+import { addWeb } from "./add.js";
 import { captureWeb } from "./capture/web.js";
+import type { Meta } from "./lib/meta.js";
 import { ingestAppStore, ingestFolder, isStoreUrl } from "./capture/app.js";
 import { analyze } from "./librarian/analyze.js";
 import { openDb, reindexAll, searchDesigns, listTagCounts } from "./lib/db.js";
@@ -24,10 +26,14 @@ function parseArgs(argv: string[]): Parsed {
 }
 
 async function addOne(target: string, note: string | undefined, force: boolean): Promise<void> {
-  const slug = isStoreUrl(target)
-    ? await ingestAppStore(target, note)
-    : await captureWeb(target, { note, force });
-  const meta = await analyze(slug);
+  let slug: string;
+  let meta: Meta;
+  if (isStoreUrl(target)) {
+    slug = await ingestAppStore(target, note);
+    meta = await analyze(slug);
+  } else {
+    ({ slug, meta } = await addWeb(target, { note, force }));
+  }
   console.log(`saved: ${slug} [${meta.status}] tags=${meta.tags.join(",")}`);
 }
 
@@ -64,7 +70,8 @@ async function main(): Promise<void> {
     }
     case "capture": {
       if (!positional[0]) throw new Error("usage: capture <url>");
-      console.log(await captureWeb(positional[0], { note, force: Boolean(flags.force) }));
+      if (flags.force) throw new Error("capture has no --force; use add --force, which keeps the old entry until the new one is reviewed");
+      console.log(await captureWeb(positional[0], { note }));
       break;
     }
     case "analyze": {

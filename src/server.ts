@@ -8,7 +8,7 @@ import { readAnalysis, readMeta, type Meta } from "./lib/meta.js";
 import { openDb, reindexAll, searchDesigns, listTagCounts, type SearchHit } from "./lib/db.js";
 import { imageBlock, thumbnailSource } from "./lib/images.js";
 import { STYLE_TAGS, CATEGORIES, COMPONENT_TYPES } from "./lib/vocab.js";
-import { captureWeb } from "./capture/web.js";
+import { addWeb } from "./add.js";
 import { ingestAppStore, ingestFolder, isStoreUrl } from "./capture/app.js";
 import { analyze } from "./librarian/analyze.js";
 
@@ -194,7 +194,7 @@ server.registerTool("add_design", {
     name: z.string().optional().describe("App name (required with folder)"),
     platform: z.enum(["ios", "android", "macos", "web"]).optional(),
     note: z.string().optional().describe("Why this design is worth saving — gets indexed"),
-    force: z.boolean().default(false).describe("Re-capture over a same-day entry"),
+    force: z.boolean().default(false).describe("Re-capture a same-day entry; the old one stays until the new capture has been reviewed"),
   },
 }, async ({ urls, folder, name, platform, note, force }) => {
   try {
@@ -211,9 +211,15 @@ server.registerTool("add_design", {
       for (const url of urls!) {
         console.error(`good-eye: capturing ${url}…`);
         try {
-          const slug = isStoreUrl(url) ? await ingestAppStore(url, note) : await captureWeb(url, { note, force });
-          console.error(`good-eye: analyzing ${slug}…`);
-          const meta = await analyze(slug);
+          let slug: string;
+          let meta: Meta;
+          if (isStoreUrl(url)) {
+            slug = await ingestAppStore(url, note);
+            console.error(`good-eye: analyzing ${slug}…`);
+            meta = await analyze(slug);
+          } else {
+            ({ slug, meta } = await addWeb(url, { note, force }));
+          }
           lines.push(`saved: ${slug} [${meta.status}] tags=${meta.tags.join(",")}`);
         } catch (err) {
           lines.push(`failed: ${url} — ${err instanceof Error ? err.message : err}`);

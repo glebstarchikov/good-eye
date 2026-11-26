@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import fs from "node:fs";
@@ -30,17 +31,57 @@ export function dbPath(): string {
   return path.join(dataDir(), "catalog.db");
 }
 
-/** "https://www.Stripe.com/" -> "stripe-com--2026-07-11" */
-export function makeSlug(name: string, date: Date = new Date()): string {
-  const clean = name
+/** Where a forced re-capture is built and reviewed before it replaces the entry. It sits beside
+ * designs/, on the same disk so the final move is a rename, and outside it so nothing that lists
+ * entries (reindex, the app's sync) ever sees a half-done copy. */
+export function stagingDir(): string {
+  return path.join(dataDir(), ".staging");
+}
+
+function cleanName(name: string, max: number): string {
+  return name
     .toLowerCase()
     .replace(/^https?:\/\//, "")
     .replace(/^www\./, "")
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
-    .slice(0, 60)
-    .replace(/-+$/, ""); // the slice can land on a separator; never leak a dash into the "--" delimiter
-  return `${clean}--${date.toISOString().slice(0, 10)}`;
+    .slice(0, max)
+    .replace(/-+$/, ""); // the slice can land on a separator; never leak a dash into a delimiter
+}
+
+/** "https://www.Stripe.com/" -> "stripe-com--2026-07-11" */
+export function makeSlug(name: string, date: Date = new Date()): string {
+  return `${cleanName(name, 60)}--${date.toISOString().slice(0, 10)}`;
+}
+
+/** Which page a URL is: its host without www, and its path without a trailing slash. The protocol,
+ * query and # part don't count. good-eye-app's capture worker keeps a copy; keep the two in step. */
+export function pageKey(url: string): string {
+  const u = new URL(url);
+  return u.hostname.replace(/^www\./, "") + u.pathname.replace(/\/+$/, "");
+}
+
+/** "https://linear.app/changelog" -> "linear-app-changelog-<6 hex>--2026-11-26". The code comes from
+ * the page key, so pages whose names clean up to the same words (/a_b and /a-b, a long path cut
+ * short) never share an entry, and the same page always gets the same name. */
+export function webSlug(url: string, date: Date = new Date()): string {
+  const key = pageKey(url);
+  const code = createHash("sha256").update(key).digest("hex").slice(0, 6);
+  return `${cleanName(key, 53)}-${code}--${date.toISOString().slice(0, 10)}`;
+}
+
+/** A capture folder with no meta.json is one still running, or one a killed run left behind. A live
+ * capture writes a file every minute or so (its own waits are 30 to 45 s), so one untouched this long
+ * is abandoned. */
+export const ABANDONED_AFTER_MS = 15 * 60_000;
+
+/** When anything in dir last changed: the newest mtime of the folder and everything inside it. */
+export function lastTouched(dir: string): number {
+  let newest = fs.statSync(dir).mtimeMs;
+  for (const e of fs.readdirSync(dir, { withFileTypes: true, recursive: true })) {
+    newest = Math.max(newest, fs.statSync(path.join(e.parentPath, e.name)).mtimeMs);
+  }
+  return newest;
 }
 
 export function ensureDir(p: string): void {

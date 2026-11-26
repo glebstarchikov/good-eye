@@ -3,7 +3,7 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { chromium, type Page, type Request, type Response } from "playwright";
 import { Vibrant } from "node-vibrant/node";
-import { designDir, ensureDir, makeSlug } from "../lib/paths.js";
+import { ABANDONED_AFTER_MS, designDir, ensureDir, lastTouched, webSlug } from "../lib/paths.js";
 import { MetaSchema, domainFromUrl, writeMeta, type Meta } from "../lib/meta.js";
 
 const DESKTOP = { width: 1440, height: 900 };
@@ -480,17 +480,24 @@ export function salvageOrCleanup(dir: string, fields: {
     title: fields.title ?? "", category: "other", status: "partial", captured_at: new Date().toISOString(),
     note: fields.note, tags: [], palette: [], typography: {}, components: fields.components ?? [], screens: [],
   });
-  writeMeta(meta);
+  writeMeta(meta, dir);
   return true;
 }
 
-export async function captureWeb(url: string, opts: { note?: string; force?: boolean } = {}): Promise<string> {
+/** Captures url into its entry folder. `dir` instead captures into a fresh staging folder, for a
+ * forced re-capture (src/add.ts) that replaces the entry only once it has been reviewed. */
+export async function captureWeb(url: string, opts: { note?: string; dir?: string } = {}): Promise<string> {
   const domain = domainFromUrl(url);
-  const slug = makeSlug(domain);
-  const dir = designDir(slug);
-  if (fs.existsSync(dir)) {
-    if (!opts.force) throw new Error(`Entry "${slug}" already exists for today; pass force to re-capture`);
-    fs.rmSync(dir, { recursive: true, force: true });
+  const slug = webSlug(url);
+  const dir = opts.dir ?? designDir(slug);
+  if (!opts.dir && fs.existsSync(dir)) {
+    if (fs.existsSync(path.join(dir, "meta.json"))) {
+      throw new Error(`Entry "${slug}" already exists for today; pass force to re-capture`);
+    }
+    if (Date.now() - lastTouched(dir) < ABANDONED_AFTER_MS) {
+      throw new Error(`Entry "${slug}" is still being captured; try again in a few minutes`);
+    }
+    fs.rmSync(dir, { recursive: true, force: true }); // a killed capture's leftovers
   }
 
   try {
@@ -603,7 +610,7 @@ async function runCapture(
         category: "other", status, captured_at: new Date().toISOString(),
         note, tags: [], palette: [], typography: {}, components, screens: [],
       });
-      writeMeta(meta);
+      writeMeta(meta, dir);
       return slug;
     } catch (err) {
       if (salvageOrCleanup(dir, { slug, url, domain, note, title, components })) {

@@ -47,14 +47,15 @@ export const LibrarianOutputSchema = z.object({
 });
 export type LibrarianOutput = z.infer<typeof LibrarianOutputSchema>;
 
-export function readMeta(slug: string): Meta {
-  const p = path.join(designDir(slug), "meta.json");
+// The optional dir is for a forced re-capture, built in staging under the entry's final slug.
+export function readMeta(slug: string, dir: string = designDir(slug)): Meta {
+  const p = path.join(dir, "meta.json");
   if (!fs.existsSync(p)) throw new Error(`No design entry "${slug}" (missing ${p})`);
   return MetaSchema.parse(JSON.parse(fs.readFileSync(p, "utf8")));
 }
 
-export function writeMeta(meta: Meta): void {
-  fs.writeFileSync(path.join(designDir(meta.slug), "meta.json"), JSON.stringify(meta, null, 2));
+export function writeMeta(meta: Meta, dir: string = designDir(meta.slug)): void {
+  fs.writeFileSync(path.join(dir, "meta.json"), JSON.stringify(meta, null, 2));
 }
 
 export function listSlugs(): string[] {
@@ -64,13 +65,13 @@ export function listSlugs(): string[] {
     .sort();
 }
 
-export function readAnalysis(slug: string): string {
-  const p = path.join(designDir(slug), "analysis.md");
+export function readAnalysis(slug: string, dir: string = designDir(slug)): string {
+  const p = path.join(dir, "analysis.md");
   return fs.existsSync(p) ? fs.readFileSync(p, "utf8") : "";
 }
 
-export function writeAnalysis(slug: string, text: string): void {
-  fs.writeFileSync(path.join(designDir(slug), "analysis.md"), text);
+export function writeAnalysis(slug: string, text: string, dir: string = designDir(slug)): void {
+  fs.writeFileSync(path.join(dir, "analysis.md"), text);
 }
 
 export function domainFromUrl(url: string): string {
