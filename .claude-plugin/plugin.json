@@ -1,7 +1,7 @@
 {
   "name": "good-eye",
-  "description": "Personal design-inspiration library: curated screenshots, palettes, typography and written reviews, searchable over MCP. Save sites you like; design-factory reads from it.",
-  "version": "0.3.5",
+  "description": "Personal design-inspiration library: curated screenshots, palettes, typography and written reviews, searchable over MCP. Save the sites you like.",
+  "version": "0.3.6",
   "author": { "name": "Gleb Starchikov" },
   "keywords": ["design", "ui", "ux", "inspiration", "reference", "mcp"],
   "license": "MIT",
