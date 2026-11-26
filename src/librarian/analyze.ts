@@ -107,16 +107,18 @@ function applyLibrarian(meta: Meta, out: LibrarianOutput, dir: string): Meta {
     }
   }
 
-  writeAnalysis(meta.slug, out.review);
+  writeAnalysis(meta.slug, out.review, dir);
   if (meta.status === "needs-analysis") meta.status = "complete"; // partial stays partial
   return meta;
 }
 
-export async function analyze(slug: string): Promise<Meta> {
-  let meta = readMeta(slug);
+/** Reviews the entry in entryDir (its own folder, or a staging copy of it) and writes meta.json and
+ * analysis.md there. Leaves the catalog alone; `succeeded` is false when no review was written. */
+export async function reviewIn(entryDir: string, slug: string): Promise<{ meta: Meta; succeeded: boolean }> {
+  let meta = readMeta(slug, entryDir);
   // The librarian runs in dir and may Read only under it, both by real path, so the files the prompt
   // lists must be real paths too: one through a symlinked data folder would be refused.
-  const dir = fs.realpathSync(designDir(slug));
+  const dir = fs.realpathSync(entryDir);
   const basePrompt = buildPrompt(meta, dir);
   let lastError = "";
   let succeeded = false;
@@ -142,8 +144,12 @@ export async function analyze(slug: string): Promise<Meta> {
   if (!succeeded) {
     console.error(`good-eye: analysis failed for ${slug}, status left as ${meta.status} (${lastError})`);
   }
+  writeMeta(meta, dir);
+  return { meta, succeeded };
+}
 
-  writeMeta(meta);
+export async function analyze(slug: string): Promise<Meta> {
+  const { meta } = await reviewIn(designDir(slug), slug);
   const db = openDb();
   upsertDesign(db, meta, readAnalysis(slug));
   db.close();

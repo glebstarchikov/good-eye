@@ -5,7 +5,7 @@ import path from "node:path";
 import { chromium, type Browser, type Page } from "playwright";
 import sharp from "sharp";
 import { tempDataDir, startFixtureServer } from "./helpers.js";
-import { designDir } from "../src/lib/paths.js";
+import { designDir, webSlug } from "../src/lib/paths.js";
 import { readMeta } from "../src/lib/meta.js";
 import { captureWeb, salvageOrCleanup, gotoReady, looksChallenged, clearOverlays, CaptureError, inBackground } from "../src/capture/web.js";
 
@@ -65,12 +65,48 @@ test("captureWeb produces artifacts, tokens, and provisional meta", async () => 
   }
 });
 
-test("same-day duplicate is refused without force, allowed with force", async () => {
+test("captureWeb names the entry by its page", async () => {
+  tempDataDir();
+  assert.equal(await captureWeb(base), webSlug(base));
+});
+
+test("a same-day entry for the same page is refused and left as it was", async () => {
   tempDataDir();
   const slug = await captureWeb(base);
-  await assert.rejects(() => captureWeb(base), /already exists/);
-  const again = await captureWeb(base, { force: true });
-  assert.equal(again, slug);
+  const metaFile = path.join(designDir(slug), "meta.json");
+  const before = fs.readFileSync(metaFile, "utf8");
+  await assert.rejects(() => captureWeb(`${base}?utm_source=x`), /already exists for today/);
+  assert.equal(fs.readFileSync(metaFile, "utf8"), before);
+});
+
+/** A folder a killed capture would leave: screenshots, no meta.json, last touched `minutesAgo` ago. */
+function leftover(slug: string, minutesAgo: number): string {
+  const dir = designDir(slug);
+  fs.mkdirSync(path.join(dir, "components"), { recursive: true });
+  const marker = path.join(dir, "components", "stale.png");
+  fs.writeFileSync(marker, "stale");
+  const t = new Date(Date.now() - minutesAgo * 60_000);
+  for (const p of [marker, path.join(dir, "components"), dir]) fs.utimesSync(p, t, t);
+  return marker;
+}
+
+test("a half-finished folder untouched for 15 minutes is replaced by a new capture", async () => {
+  tempDataDir();
+  const marker = leftover(webSlug(base), 16);
+  const slug = await captureWeb(base);
+  assert.ok(fs.existsSync(path.join(designDir(slug), "meta.json")));
+  assert.ok(!fs.existsSync(marker), "the abandoned files were not cleared");
+});
+
+test("a half-finished folder touched in the last 15 minutes is a capture still running: left alone", async () => {
+  tempDataDir();
+  const marker = leftover(webSlug(base), 14);
+  // Only the newest file counts: an old folder with one fresh file is still in progress.
+  const fresh = path.join(designDir(webSlug(base)), "desktop-fold.png");
+  fs.writeFileSync(fresh, "just written");
+  await assert.rejects(() => captureWeb(base), /still being captured/);
+  assert.ok(fs.existsSync(marker) && fs.existsSync(fresh));
+  assert.ok(!fs.existsSync(path.join(designDir(webSlug(base)), "meta.json")));
 });
 
 test("in the background, a blocked site is queued for a person: no visible browser, no entry", async () => {

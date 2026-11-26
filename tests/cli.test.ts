@@ -84,3 +84,23 @@ test("flag-shaped value after --tag is refused, not swallowed", async () => {
     (err: { code: number; stderr: string }) => err.code === 1 && /missing value for --tag/.test(err.stderr)
   );
 });
+
+test("capture --force is refused, so the old delete-first re-capture can't run; add --force keeps the entry until the new one is reviewed", async () => {
+  const dir = tempDataDir();
+  await assert.rejects(() => cli(["capture", base, "--force"], dir), (err: { stderr: string }) => {
+    assert.match(err.stderr, /use add --force/);
+    return true;
+  });
+  assert.ok(!fs.existsSync(path.join(dir, "designs")), "capture --force still captured");
+});
+
+test("analyze waits its turn: while another run holds the page, it's refused and changes nothing", async () => {
+  const dir = tempDataDir();
+  const lock = path.join(dir, ".locks", "example-com--2026-01-01");
+  fs.mkdirSync(lock, { recursive: true });
+  await assert.rejects(() => cli(["analyze", "example-com--2026-01-01"], dir), (err: { stderr: string }) => {
+    assert.match(err.stderr, /still being captured/);
+    return true;
+  });
+  assert.ok(fs.existsSync(lock));
+});
