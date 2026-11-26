@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { Vibrant } from "node-vibrant/node";
+import { extractPalette } from "./palette.js";
 import { designDir, ensureDir, makeSlug } from "../lib/paths.js";
 import { MetaSchema, writeMeta } from "../lib/meta.js";
 
@@ -28,10 +28,7 @@ export async function ingestFolder(args: {
     return { name: `screen-${i + 1}`, path: rel, description: "" };
   });
 
-  const palette = await Vibrant.from(path.join(dir, screens[0].path)).getPalette();
-  const empiricalPalette = Object.entries(palette)
-    .filter(([, s]) => s)
-    .map(([name, s]) => ({ name, hex: s!.hex, population: s!.population }));
+  const empiricalPalette = await extractPalette(path.join(dir, screens[0].path));
   fs.writeFileSync(path.join(dir, "tokens.json"), JSON.stringify({ declared: {}, empiricalPalette }, null, 2));
 
   const meta = MetaSchema.parse({

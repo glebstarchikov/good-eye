@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { chromium, type Page, type Request, type Response } from "playwright";
-import { Vibrant } from "node-vibrant/node";
+import { extractPalette } from "./palette.js";
 import { ABANDONED_AFTER_MS, designDir, ensureDir, lastTouched, webSlug } from "../lib/paths.js";
 import { MetaSchema, domainFromUrl, writeMeta, type Meta } from "../lib/meta.js";
 
@@ -456,13 +456,6 @@ async function extractDeclaredTokens(page: Page) {
   });
 }
 
-async function empiricalPalette(imagePath: string) {
-  const palette = await Vibrant.from(imagePath).getPalette();
-  return Object.entries(palette)
-    .filter(([, swatch]) => swatch)
-    .map(([name, swatch]) => ({ name, hex: swatch!.hex, population: swatch!.population }));
-}
-
 /** Called on any throw after ensureDir(dir) inside captureWeb (spec §4: a partial capture saves what
  * it got, marked "partial"). If a full-page or above-the-fold screenshot made it to disk, that's worth
  * keeping — write a provisional meta.json with whatever fields are known so analyze() can still run on
@@ -599,7 +592,7 @@ async function runCapture(
         await mctx.close();
       } catch { degrade(); }
 
-      const palette = await empiricalPalette(path.join(dir, "desktop-fold.png"));
+      const palette = await extractPalette(path.join(dir, "desktop-fold.png"));
       fs.writeFileSync(
         path.join(dir, "tokens.json"),
         JSON.stringify({ declared, empiricalPalette: palette }, null, 2)
