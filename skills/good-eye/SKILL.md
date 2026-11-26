@@ -1,6 +1,6 @@
 ---
 name: good-eye
-description: Gleb's design reference library (screenshots, palettes, type and a written review per site or app). Use to save a site or app he shares, or to look references up when design-factory's references step asks. It is a library, not a design process: designing UI goes through design-factory.
+description: Gleb's design reference library (screenshots, palettes, type and a written review per site or app). Use to save a site or app he shares, or to look up references for design work. It is a library, not a design process.
 ---
 
 # good-eye
